@@ -1,6 +1,7 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase B (router + agents + orchestrator).**
+**Backend phase covered by this document: Phase C (intelligent memory, on top of Phase A auth
+and Phase B router/agents/orchestrator).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
 building Mora's frontend without re-reading the backend source. Everything here describes
 what the backend **actually does today** — nothing aspirational.
@@ -68,7 +69,9 @@ Optionally show a lightweight "direct" badge in a dev/debug view.
 **Backend provides:** `PersonalAgentService` handles messages routed `personal` (family,
 health, personal scheduling, etc.). It only ever sees prior messages of the **same
 conversation that are themselves scoped `personal` or `direct`** — never professional
-content (enforced server-side, not just a frontend convention).
+content (enforced server-side, not just a frontend convention). Since Phase C, it also
+builds its context from **personal-scoped memories, profile facts, and the conversation
+summary** (see §13 "Phase C Memory UX") — all through the same strict scope filter.
 
 **Frontend should:**
 - Show a distinct visual treatment for personal-scoped messages (e.g. a "Personal" badge
@@ -94,7 +97,9 @@ tagged with one of four **spaces**:
 | `code` | "code", "bug", "TypeScript", "API", "déploiement", "git"... |
 
 Like Personal, the professional agent only ever sees prior `professional`/`direct` messages
-of the same conversation — never personal content.
+of the same conversation — never personal content. Since Phase C, it also draws on
+professional-scoped memories/profile facts/summary for the same (scope, space) pair only
+(a Logistiga memory is never visible to a Piston or Code conversation, and vice versa).
 
 **Frontend should:**
 - Show a **space badge** per message/conversation: "Logistiga", "Piston", "Code",
@@ -181,26 +186,112 @@ exposes audit entries yet** — this is server-side only in Phase B.
 
 ---
 
-## 10. LLM configuration & its effect on the UI
+## 10. LLM / embedding configuration & its effect on the UI
 
-**Backend provides:** `LlmService` never crashes the app if no LLM provider is configured
-(no `OPENAI_API_KEY` set). Instead, `personal`/`professional` responses come back with a
-fixed placeholder message: *"Configuration LLM manquante : aucun provider n'est configuré
+**Backend provides:** neither `LlmService` nor `EmbeddingService` ever crashes the app if
+unconfigured. With no LLM (`OPENAI_API_KEY` unset), `personal`/`professional` responses come
+back with a fixed placeholder: *"Configuration LLM manquante : aucun provider n'est configuré
 (OPENAI_API_KEY absent). Cette réponse est un espace réservé — configurez un provider pour
-obtenir une vraie réponse."* `direct` and `hybrid`-blocked responses are unaffected (they
-never call the LLM).
+obtenir une vraie réponse."* With no embedding provider (`MORA_EMBEDDING_ENABLED=false` or no
+`MORA_EMBEDDING_API_KEY`), memories are still created and fully usable — they simply never get
+a vector, and retrieval silently uses real Postgres text search instead of semantic search.
+`direct` and `hybrid`-blocked responses are unaffected by either (they never call an LLM).
 
-**Frontend should:** render this placeholder exactly like a normal assistant message — no
-special handling is required for the app to function. Optionally, if useful for an
-admin/dev view, the message text itself is a reliable string to detect "LLM not configured"
-state (there is no dedicated boolean field in the `POST /messages` response for this today).
+**Frontend should:** render the LLM placeholder exactly like a normal assistant message — no
+special handling required. There is no dedicated "is LLM/embedding configured" field anywhere
+in the API; infer it from behavior if a debug view needs it (see `API_CONTRACT.md`'s "LLM /
+embedding configuration" section for the exact signals).
 
-**Not available yet:** no endpoint to check/set LLM configuration status directly; no
-provider selection UI (single provider, OpenAI-compatible, env-configured only).
+**Not available yet:** no endpoint to check/set LLM or embedding configuration directly; no
+provider selection UI (one provider each, OpenAI-compatible, env-configured only).
 
 ---
 
-## 11. Screens the frontend can already build with Phase B
+## 11. Phase C Memory UX
+
+This is the biggest addition in Phase C: Mora now remembers things across conversations,
+strictly separated by scope/space, and a frontend can start surfacing that memory to the user.
+
+### What the backend actually does
+- Every reply from Personal/Professional (never Direct/Hybrid) can trigger a **background**
+  extraction job that looks at the exchange and decides whether anything durable is worth
+  remembering (a preference, a decision, a person/company, a project, a habit, a procedure,
+  an event, a fact) — trivial exchanges (greetings, "merci", "ok") are filtered out before
+  ever reaching this step, so **not every message becomes a memory**.
+- A memory can later be **superseded**: if a new extracted fact closely matches an existing
+  one, the old one is marked `superseded` (never deleted, kept for history) and a new
+  `active` one takes over, linked via `supersededById`.
+- Long conversations (past a message-count threshold) get a **rolling summary** per
+  (conversation, scope, space), updated incrementally rather than re-summarizing from
+  scratch each time.
+- Before every Personal/Professional reply, the backend assembles context from: the relevant
+  memories (semantic search if an embedding provider is configured, otherwise real Postgres
+  text search — same result shape either way), the profile facts, the conversation summary,
+  and recent messages — all filtered to the same (userId, scope, space) triple. None of this
+  is exposed as a separate "context" API; it only affects the quality of the reply.
+
+### What the frontend can build now
+- **Memories screen** (list + detail): `GET /memories` with `scope`/`space`/`kind`/`status`/
+  `search` filters (see `API_CONTRACT.md`). Suggested UI: a filterable list grouped by
+  scope (Personal / Professional), with a space sub-filter for Professional
+  (Logistiga/Piston/Code/General), a kind badge (préférence, fait, décision, ...), and
+  importance/confidence shown as small indicators (e.g. dots or a thin bar), not raw numbers.
+- **Memory detail**: show `content`, `kind`, `importance`, `confidence`, `source` ("manual" vs
+  "extraction"), `status`, and — if `status === 'superseded'` — a link/reference to
+  `supersededById` ("replaced by a newer memory").
+- **Create memory** form: `POST /memories` (scope, space, kind, content, optional importance/
+  confidence) — lets a user add a memory manually rather than waiting for extraction.
+- **Edit memory**: `PATCH /memories/:id` (content/importance/confidence/validUntil/metadata).
+- **Archive action**: `POST /memories/:id/archive` — a simple button/menu item, no confirmation
+  dialog strictly required (archiving isn't destructive; the row is kept).
+- **Profile facts** section (e.g. inside a user profile/settings screen): `GET /profile-facts`,
+  read-only for now — render as a simple key/value list, scoped by Personal/Professional tabs.
+- **Entities** view (optional, more of a "who/what Mora knows about" screen): `GET /entities`,
+  read-only, grouped by `type` (person/company/...), scoped by Personal/Professional.
+- **Conversation summary indicator**: inside a chat screen, if `GET /conversation-summaries?
+  conversationId=...` returns a row for the current scope/space, show a small "conversation
+  summarized" affordance (e.g. a collapsible "Résumé" panel above the message list) — this is
+  optional polish, not required for the chat to work.
+
+### Loading / empty / error states
+- **Loading**: standard list/detail skeletons for `GET /memories`, `/profile-facts`,
+  `/entities`, `/conversation-summaries`.
+- **Empty**: a brand-new user has zero memories/facts/entities/summaries — show a friendly
+  empty state ("Mora n'a encore rien retenu ici") rather than an error; this is the normal
+  starting state, not a bug.
+- **Error**: `401` (session expired — same refresh/logout flow as elsewhere), `403`/`404` on
+  a specific memory id (not the caller's, or doesn't exist) — treat like the existing
+  conversation 403/404 handling.
+
+### Permissions / enabled-disabled elements
+- No per-space or per-kind permission model exists yet — any authenticated user can read/
+  create/edit/archive any of their own memories, in any scope/space. Nothing to gate in the
+  UI beyond "is this memory mine" (already enforced server-side).
+- There is **no delete button to build** — Phase C only supports archive (soft) and supersede
+  (system-driven); a hard-delete endpoint doesn't exist.
+- There is **no manual "supersede this memory" button to build** — expose superseding only as
+  the *effect* you see (an old memory shows `status: superseded` and a pointer to its
+  replacement), not as a user-triggered action, since only the extraction pipeline creates
+  supersessions today.
+
+### Semantic vs. text retrieval — what it means for the UI
+The frontend never chooses or sees the retrieval mode directly (no `mode` field in any public
+response) — this is entirely an internal quality difference: with an embedding provider
+configured, Mora's replies draw on memories found by *meaning*, not just keyword overlap;
+without one, they still draw on memories, just found by real Postgres text matching. Both are
+fully functional; there is nothing to build differently for either case.
+
+### Suggested UI components
+- A `ScopeSpaceBadge` component reusable across Memories, Entities, Profile Facts and Chat —
+  one visual language for "Personal" vs "Professional/Logistiga/Piston/Code" everywhere.
+- A `KindTag` component for the 9 memory kinds (small labeled chip, one color family per kind
+  group — e.g. warm tones for preference/habit, cool tones for fact/decision).
+- A `ConfidenceImportanceMeter` (two thin bars or dots, 0–1) — avoid showing raw floats like
+  `0.73` directly to end users.
+
+---
+
+## 12. Screens the frontend can already build with Phase A+B+C
 
 - **Login** / **Register** screens (Phase A auth).
 - **Main Chat screen**: send a message, see Mora's reply, with a route/space badge.
@@ -209,24 +300,29 @@ provider selection UI (single provider, OpenAI-compatible, env-configured only).
 - **Space badges**: Logistiga / Piston / Code / Professionnel (general).
 - **Router indication**: small badge showing which route Mora used (Direct / Personal /
   Professional / Hybrid).
-- **Settings panel** showing cross-scope as **disabled** (read-only in Phase B — no toggle
-  endpoint exists).
+- **Settings panel** showing cross-scope as **disabled** (read-only — no toggle endpoint
+  exists).
+- **Memories list/detail, create, edit, archive** (§11).
+- **Profile facts view** (read-only) (§11).
+- **Entities view** (read-only) (§11).
+- **Conversation summary indicator** in the chat screen (§11).
 
-## 12. Explicitly NOT available yet (do not build UI for these)
+## 13. Explicitly NOT available yet (do not build UI for these)
 
-Long-term memory, embeddings/semantic search, documents, tools/actions, WhatsApp, email,
-calendar integration, voice, avatar, conversation titles/rename/delete, pagination, LLM
-provider selection UI, per-space permissions, a working cross-scope toggle, password reset,
-audit log UI.
+Documents/RAG over files, tools/actions the assistant can execute, WhatsApp, email, calendar
+integration, LogistiGA/Piston external APIs, voice, speech recognition, vision, 3D avatar,
+n8n, conversation titles/rename/delete, pagination, LLM/embedding provider selection UI,
+per-space permissions, a working cross-scope toggle, password reset, audit log UI, a memory
+delete button, a manual "supersede" action, POST/PATCH for profile-facts or entities.
 
 ---
 
 ## À maintenir à chaque phase
 
 `FRONTEND_HANDOFF.md`, `API_CONTRACT.md`, and `TYPES.md` are **living documents** — update
-all three at the end of every phase (C, D, E, F, G, H) to reflect the real, shipped backend
-state, the same way this document was written for Phase B. Never let them describe a
-feature that isn't actually implemented yet.
+all three at the end of every remaining phase (D, E, F, G, H) to reflect the real, shipped
+backend state, the same way this document was updated for Phase C (on top of what Phase B
+wrote). Never let them describe a feature that isn't actually implemented yet.
 
 At **Phase H**, these three documents (accumulated across all phases) will be used to
 generate `docs/frontend/LOVABLE_MASTER_PROMPT.md` — a single consolidated prompt handing the

@@ -1,8 +1,10 @@
 // Mora Backend v2 — Prisma schema
 // Phase A: core foundation (User + auth).
 // Phase B: router/agents/orchestrator plumbing (Conversation, Message,
-// RouterDecision, AuditEntry, Setting). No memory/embedding models yet.
-// See docs/ROADMAP.md for what pgvector-backed models arrive in Phase C.
+// RouterDecision, AuditEntry, Setting).
+// Phase C: intelligent memory (Memory, Entity, MemoryEntity,
+// ConversationSummary, ProfileFact) — see docs/ARCHITECTURE.md for the
+// retrieval/embedding/extraction design.
 
 generator client {
   provider        = "prisma-client"
@@ -36,6 +38,9 @@ model User {
 
   refreshTokens RefreshToken[]
   conversations Conversation[]
+  memories      Memory[]
+  entities      Entity[]
+  profileFacts  ProfileFact[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -77,6 +82,7 @@ model Conversation {
 
   messages        Message[]
   routerDecisions RouterDecision[]
+  summaries       ConversationSummary[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -150,4 +156,171 @@ model Setting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("settings")
+}
+
+// ============================================================================
+// Phase C — Intelligent memory
+// scope/space/kind/status kept as plain strings (validated in the app layer,
+// see src/memory/memory.types.ts) for the same reason as Message/RouterDecision
+// in Phase B: new kinds/spaces should never require a migration.
+//
+// `embedding` is declared `Unsupported("vector")` because Prisma Client has no
+// native vector scalar: it is written/read exclusively through parameterized
+// raw SQL (see src/memory/memory-embedding.repository.ts), never through the
+// generated Prisma Client API, and is therefore invisible to `prisma.memory.*`
+// calls (create/update/select simply skip it).
+//
+// No fixed dimension is declared on the column (per the brief: never assume
+// 1536), which means an ANN index (HNSW/IVFFlat) is NOT technically
+// compatible here — pgvector's own engine rejects `CREATE INDEX ... USING
+// hnsw` on a dimensionless `vector` column ("column does not have
+// dimensions"), confirmed against a real Postgres+pgvector instance while
+// building this phase. Retrieval therefore does an exact (brute-force)
+// cosine-distance scan filtered by userId/scope/space/embeddingDimensions —
+// correct and fine at Phase C's data volume. Once a production embedding
+// model is locked in, a follow-up migration can narrow the column to
+// `vector(N)` and add the HNSW index for that fixed N.
+// ============================================================================
+
+model Memory {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String // 'personal' | 'professional'
+  space String // 'personal' | 'general' | 'logistiga' | 'piston' | 'code'
+  kind  String // fact|preference|person|company|decision|procedure|event|project|habit
+
+  content    String
+  importance Float  @default(0.5)
+  confidence Float  @default(0.5)
+
+  source   String // 'manual' | 'extraction'
+  sourceId String? @map("source_id") @db.Uuid // e.g. the message this was extracted from
+
+  status     String    @default("active") // active|pending|archived|superseded
+  validFrom  DateTime  @default(now()) @map("valid_from")
+  validUntil DateTime? @map("valid_until")
+
+  lastAccessedAt DateTime? @map("last_accessed_at")
+  accessCount    Int       @default(0) @map("access_count")
+
+  supersededById String?  @unique @map("superseded_by_id") @db.Uuid
+  supersededBy   Memory?  @relation("MemorySupersession", fields: [supersededById], references: [id])
+  supersedes     Memory?  @relation("MemorySupersession")
+
+  embedding           Unsupported("vector")?
+  embeddingModel       String? @map("embedding_model")
+  embeddingDimensions  Int?    @map("embedding_dimensions")
+
+  metadata Json?
+
+  memoryEntities MemoryEntity[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, scope, space, status])
+  @@index([userId, status, kind])
+  @@map("memories")
+}
+
+model Entity {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String // 'personal' | 'professional'
+  space String
+  type  String // person|company|client|project|place|equipment|object
+  name  String
+
+  aliases  String[] @default([])
+  metadata Json?
+
+  memoryEntities MemoryEntity[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Cheap dedup: same user+scope+space+type+name is the same entity.
+  @@unique([userId, scope, space, type, name])
+  @@index([userId, scope, space])
+  @@map("entities")
+}
+
+model MemoryEntity {
+  id String @id @default(uuid()) @db.Uuid
+
+  memoryId String @map("memory_id") @db.Uuid
+  memory   Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  entityId String @map("entity_id") @db.Uuid
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  role String? // e.g. 'subject' | 'mentioned'
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([memoryId, entityId])
+  @@index([entityId])
+  @@map("memory_entities")
+}
+
+// One row per (conversation, scope, space) — a conversation can carry both
+// personal and professional messages over time (Phase B), so its summary
+// must stay split the same way memory/context retrieval does, or a
+// personal-scope summary could leak professional content into an agent's
+// context and vice versa.
+model ConversationSummary {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String       @map("user_id") @db.Uuid
+
+  scope String
+  space String
+
+  summary          String
+  fromMessageId    String? @map("from_message_id") @db.Uuid
+  toMessageId      String? @map("to_message_id") @db.Uuid
+  messageCount     Int     @default(0) @map("message_count")
+  approxTokenCount Int     @default(0) @map("approx_token_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([conversationId, scope, space])
+  @@index([userId])
+  @@map("conversation_summaries")
+}
+
+model ProfileFact {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String
+  space String
+  key   String
+  value String
+
+  confidence Float  @default(0.5)
+  source     String
+
+  status     String    @default("active") // active|archived|superseded
+  validFrom  DateTime  @default(now()) @map("valid_from")
+  validUntil DateTime? @map("valid_until")
+
+  supersededById String?      @unique @map("superseded_by_id") @db.Uuid
+  supersededBy   ProfileFact? @relation("ProfileFactSupersession", fields: [supersededById], references: [id])
+  supersedes     ProfileFact? @relation("ProfileFactSupersession")
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, scope, space, status])
+  @@map("profile_facts")
 }

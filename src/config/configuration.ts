@@ -10,6 +10,7 @@ export interface AppConfig {
     host: string;
     port: number;
     password?: string;
+    db: number;
   };
   jwt: {
     accessSecret: string;
@@ -28,6 +29,18 @@ export interface AppConfig {
       model?: string;
     };
   };
+  embedding: {
+    enabled: boolean;
+    provider: string;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+  };
+  memory: {
+    retrievalLimit: number;
+    contextBudgetChars: number;
+    summaryMessageThreshold: number;
+  };
   crossScopeEnabled: boolean;
 }
 
@@ -44,6 +57,11 @@ export default (): { app: AppConfig } => ({
       host: process.env.REDIS_HOST ?? 'localhost',
       port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
       password: process.env.REDIS_PASSWORD || undefined,
+      // Separate logical DB per environment (Redis supports 0-15) so a
+      // locally-running dev server and the e2e test suite never share BullMQ
+      // queues on the same Redis instance — discovered as a real cross-worker
+      // race condition while validating Phase C (see docs/ARCHITECTURE.md).
+      db: parseInt(process.env.REDIS_DB ?? '0', 10),
     },
     jwt: {
       accessSecret: process.env.JWT_ACCESS_SECRET ?? '',
@@ -61,6 +79,21 @@ export default (): { app: AppConfig } => ({
         baseUrl: process.env.OPENAI_BASE_URL || undefined,
         model: process.env.OPENAI_MODEL || undefined,
       },
+    },
+    embedding: {
+      enabled: process.env.MORA_EMBEDDING_ENABLED === 'true',
+      provider: process.env.MORA_EMBEDDING_PROVIDER || 'openai-compatible',
+      baseUrl: process.env.MORA_EMBEDDING_BASE_URL || undefined,
+      apiKey: process.env.MORA_EMBEDDING_API_KEY || undefined,
+      model: process.env.MORA_EMBEDDING_MODEL || undefined,
+    },
+    memory: {
+      retrievalLimit: parseInt(process.env.MORA_MEMORY_RETRIEVAL_LIMIT ?? '8', 10),
+      contextBudgetChars: parseInt(process.env.MORA_CONTEXT_BUDGET_CHARS ?? '6000', 10),
+      summaryMessageThreshold: parseInt(
+        process.env.MORA_SUMMARY_MESSAGE_THRESHOLD ?? '20',
+        10,
+      ),
     },
     // Phase B security default: hybrid requests never combine personal +
     // professional context/actions unless this is explicitly turned on.
