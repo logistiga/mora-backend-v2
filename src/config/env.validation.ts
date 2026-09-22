@@ -67,6 +67,10 @@ export class EnvironmentVariables {
   @IsString()
   REDIS_PASSWORD?: string;
 
+  @IsOptional()
+  @IsInt()
+  REDIS_DB?: number;
+
   @IsString()
   @MinLength(32, {
     message: 'JWT_ACCESS_SECRET must be at least 32 characters long',
@@ -108,6 +112,41 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsIn(['true', 'false'])
   MORA_CROSS_SCOPE_ENABLED?: string;
+
+  // Optional: embedding provider config (Phase C). Absent by design in most
+  // environments — EmbeddingService degrades to a documented "not enabled"
+  // outcome and MemoryRetrievalService falls back to text search.
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  MORA_EMBEDDING_ENABLED?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_EMBEDDING_PROVIDER?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_EMBEDDING_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_EMBEDDING_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_EMBEDDING_MODEL?: string;
+
+  @IsOptional()
+  @IsInt()
+  MORA_MEMORY_RETRIEVAL_LIMIT?: number;
+
+  @IsOptional()
+  @IsInt()
+  MORA_CONTEXT_BUDGET_CHARS?: number;
+
+  @IsOptional()
+  @IsInt()
+  MORA_SUMMARY_MESSAGE_THRESHOLD?: number;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

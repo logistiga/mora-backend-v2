@@ -18,6 +18,7 @@ import { QueueService } from './queue.service.js';
             host: redis.host,
             port: redis.port,
             password: redis.password,
+            db: redis.db,
           },
         };
       },
@@ -33,7 +34,7 @@ import { QueueService } from './queue.service.js';
       useFactory: (configService: ConfigService) => {
         const redis = configService.get<AppConfig['redis']>('app.redis')!;
         return new QueueEvents(HEALTHCHECK_QUEUE, {
-          connection: { host: redis.host, port: redis.port, password: redis.password },
+          connection: { host: redis.host, port: redis.port, password: redis.password, db: redis.db },
         });
       },
     },

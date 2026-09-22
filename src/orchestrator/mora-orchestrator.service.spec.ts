@@ -15,6 +15,8 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
   };
   const routerDecisionsService = { save: vi.fn() };
   const auditService = { log: vi.fn() };
+  const memoryQueue = { enqueueExtraction: vi.fn(), enqueueSummary: vi.fn(), enqueueEmbedding: vi.fn() };
+  const conversationSummaryService = { shouldSummarize: vi.fn(async () => false) };
   const configService = {
     get: vi.fn(() => overrides.crossScopeEnabled ?? false),
   };
@@ -26,10 +28,27 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
     conversationsService as never,
     routerDecisionsService as never,
     auditService as never,
+    memoryQueue as never,
+    conversationSummaryService as never,
     configService as never,
   );
 
-  return { service, routerService, personalAgent, professionalAgent, conversationsService, routerDecisionsService, auditService };
+  return {
+    service,
+    routerService,
+    personalAgent,
+    professionalAgent,
+    conversationsService,
+    routerDecisionsService,
+    auditService,
+    memoryQueue,
+    conversationSummaryService,
+  };
+}
+
+/** Background jobs are fired via `void promise.catch(...)` — awaiting one tick lets them settle. */
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 const user: AgentUser = { id: 'u1', email: 'a@b.com', displayName: 'A' };
@@ -61,7 +80,7 @@ describe('MoraOrchestratorService', () => {
     expect(result.response).toMatch(/bonjour/i);
   });
 
-  it('routes "personal" to PersonalAgentService with scoped history only', async () => {
+  it('routes "personal" to PersonalAgentService with the conversation id', async () => {
     ctx.routerService.classify.mockResolvedValue({
       route: 'personal',
       scope: 'personal',
@@ -77,13 +96,15 @@ describe('MoraOrchestratorService', () => {
     const result = await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv' });
 
     expect(ctx.personalAgent.handle).toHaveBeenCalledOnce();
+    expect(ctx.personalAgent.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1' }),
+    );
     expect(ctx.professionalAgent.handle).not.toHaveBeenCalled();
-    expect(ctx.conversationsService.getScopedHistory).toHaveBeenCalledWith('conv-1', 'personal');
     expect(result.route).toBe('personal');
     expect(result.response).toBe('ok perso');
   });
 
-  it('routes "professional" to ProfessionalAgentService with scoped history only', async () => {
+  it('routes "professional" to ProfessionalAgentService with the conversation id', async () => {
     ctx.routerService.classify.mockResolvedValue({
       route: 'professional',
       scope: 'professional',
@@ -99,11 +120,10 @@ describe('MoraOrchestratorService', () => {
     const result = await ctx.service.handleMessage({ user, message: 'Statut Logistiga ?' });
 
     expect(ctx.professionalAgent.handle).toHaveBeenCalledOnce();
-    expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
-    expect(ctx.conversationsService.getScopedHistory).toHaveBeenCalledWith(
-      'conv-1',
-      'professional',
+    expect(ctx.professionalAgent.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-1' }),
     );
+    expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
     expect(result.space).toBe('logistiga');
   });
 
@@ -151,5 +171,62 @@ describe('MoraOrchestratorService', () => {
       expect.objectContaining({ route: 'direct' }),
     );
     expect(ctx.auditService.log).toHaveBeenCalledOnce();
+  });
+
+  it('schedules a memory-extraction job for personal/professional but not for direct', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'personal',
+      scope: 'personal',
+      space: 'personal',
+      intent: 'task',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.85,
+      method: 'rules',
+    });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'ok', metadata: {} });
+
+    await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv' });
+    await flushMicrotasks();
+
+    expect(ctx.memoryQueue.enqueueExtraction).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'personal', space: 'personal' }),
+    );
+  });
+
+  it('does not schedule a memory-extraction job for a direct reply', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'direct',
+      scope: 'direct',
+      space: 'direct',
+      intent: 'greeting',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.9,
+      method: 'rules',
+    });
+
+    await ctx.service.handleMessage({ user, message: 'Bonjour' });
+    await flushMicrotasks();
+
+    expect(ctx.memoryQueue.enqueueExtraction).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule a memory-extraction job for a blocked hybrid reply', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'hybrid',
+      scope: 'hybrid',
+      space: 'hybrid',
+      intent: 'task',
+      complexity: 'medium',
+      securityLevel: 'medium',
+      confidence: 0.7,
+      method: 'rules',
+    });
+
+    await ctx.service.handleMessage({ user, message: 'perso + logistiga' });
+    await flushMicrotasks();
+
+    expect(ctx.memoryQueue.enqueueExtraction).not.toHaveBeenCalled();
   });
 });

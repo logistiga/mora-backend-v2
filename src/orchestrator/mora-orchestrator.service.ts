@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { ConversationsService } from '../conversations/conversations.service.js';
 import { RouterDecisionsService } from '../conversations/router-decisions.service.js';
 import { MessageRole } from '../generated/prisma/client.js';
+import { ConversationSummaryService } from '../memory/conversation-summary.service.js';
+import { MemoryQueueService } from '../memory/queue/memory-queue.service.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
 import type { RouterDecisionResult } from '../router/router.types.js';
 
@@ -43,6 +45,8 @@ export class MoraOrchestratorService {
     private readonly conversationsService: ConversationsService,
     private readonly routerDecisionsService: RouterDecisionsService,
     private readonly auditService: AuditService,
+    private readonly memoryQueue: MemoryQueueService,
+    private readonly conversationSummaryService: ConversationSummaryService,
     configService: ConfigService,
   ) {
     this.crossScopeEnabled = configService.get<boolean>('app.crossScopeEnabled') ?? false;
@@ -56,6 +60,8 @@ export class MoraOrchestratorService {
 
     const decision = await this.routerService.classify(input.message);
 
+    // Saved BEFORE dispatch: ContextBuilderService/getScopedHistory reads
+    // this same row back as the last turn of history for the agent call.
     const userMessage = await this.conversationsService.addMessage({
       conversationId: conversation.id,
       role: MessageRole.USER,
@@ -97,6 +103,14 @@ export class MoraOrchestratorService {
       },
     });
 
+    // Fire-and-forget background jobs — never awaited, never allowed to slow
+    // down or break the response the user is waiting for.
+    if (decision.route === 'personal' || decision.route === 'professional') {
+      void this.scheduleBackgroundJobs(input.user.id, conversation.id, decision, userMessage.id, input.message, responseContent).catch(
+        (error) => this.logger.warn(`Failed to schedule Phase C background jobs: ${String(error)}`),
+      );
+    }
+
     return {
       conversationId: conversation.id,
       messageId: assistantMessage.id,
@@ -123,7 +137,7 @@ export class MoraOrchestratorService {
         this.logger.debug('Hybrid request blocked: cross-scope is disabled');
         return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true } };
       }
-      // Cross-scope is explicitly enabled, but Phase B does not implement real
+      // Cross-scope is explicitly enabled, but Phase B/C do not implement real
       // hybrid merging (Personal+Professional combined context/actions) — that
       // is out of scope here. Degrade safely rather than fabricate a merge.
       return {
@@ -135,12 +149,10 @@ export class MoraOrchestratorService {
     }
 
     if (decision.route === 'personal') {
-      const history = await this.conversationsService.getScopedHistory(conversationId, 'personal');
-      return this.personalAgent.handle({ user, message, routerDecision: decision, context: { history } });
+      return this.personalAgent.handle({ user, message, conversationId, routerDecision: decision });
     }
 
-    const history = await this.conversationsService.getScopedHistory(conversationId, 'professional');
-    return this.professionalAgent.handle({ user, message, routerDecision: decision, context: { history } });
+    return this.professionalAgent.handle({ user, message, conversationId, routerDecision: decision });
   }
 
   private buildDirectReply(decision: RouterDecisionResult): string {
@@ -151,5 +163,30 @@ export class MoraOrchestratorService {
       return "Je ne suis pas certain de bien comprendre votre demande. Pouvez-vous préciser s'il s'agit d'un sujet personnel ou professionnel ?";
     }
     return "D'accord.";
+  }
+
+  private async scheduleBackgroundJobs(
+    userId: string,
+    conversationId: string,
+    decision: RouterDecisionResult,
+    sourceMessageId: string,
+    userMessage: string,
+    assistantResponse: string,
+  ): Promise<void> {
+    const scope = decision.scope as 'personal' | 'professional';
+
+    await this.memoryQueue.enqueueExtraction({
+      userId,
+      conversationId,
+      scope,
+      space: decision.space,
+      sourceMessageId,
+      userMessage,
+      assistantResponse,
+    });
+
+    if (await this.conversationSummaryService.shouldSummarize(conversationId, scope, decision.space)) {
+      await this.memoryQueue.enqueueSummary({ conversationId, userId, scope, space: decision.space });
+    }
   }
 }

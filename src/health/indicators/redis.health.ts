@@ -17,6 +17,7 @@ export class RedisHealthIndicator {
       host: redisConfig.host,
       port: redisConfig.port,
       password: redisConfig.password,
+      db: redisConfig.db,
       lazyConnect: true,
       maxRetriesPerRequest: 1,
     });

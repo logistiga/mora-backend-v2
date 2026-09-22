@@ -1,4 +1,3 @@
-import type { LlmMessage } from '../llm/llm-provider.interface.js';
 import type { RouterDecisionResult } from '../router/router.types.js';
 
 export interface AgentUser {
@@ -7,23 +6,21 @@ export interface AgentUser {
   displayName: string;
 }
 
-/**
- * Prior turns of THIS conversation, already filtered to the scope the agent
- * is allowed to see (see ConversationsService.getScopedHistory) — an agent
- * never receives another scope's messages.
- */
-export interface AgentContext {
-  history: LlmMessage[];
-}
-
 export interface AgentResponse {
   content: string;
   metadata: Record<string, unknown>;
 }
 
+/**
+ * Agents no longer receive a pre-fetched history array: they build their own
+ * context via ContextBuilderService (Phase C), which strictly scopes every
+ * data source (messages, memories, profile facts, summary) to
+ * (userId, scope, space) — this is the enforcement point for
+ * "Personal never sees Professional and vice versa".
+ */
 export interface AgentInput {
   user: AgentUser;
   message: string;
+  conversationId: string;
   routerDecision: RouterDecisionResult;
-  context: AgentContext;
 }

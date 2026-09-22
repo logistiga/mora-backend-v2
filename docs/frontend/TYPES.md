@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B)
+# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -101,6 +101,87 @@ interface MessageResponse {
   scope: MoraScope;
   space: MoraSpace;
   confidence: number; // 0..1
+}
+
+// ---- Memory (Phase C) -------------------------------------------------------
+
+type MemoryKind =
+  | 'fact' | 'preference' | 'person' | 'company' | 'decision'
+  | 'procedure' | 'event' | 'project' | 'habit';
+type MemoryStatus = 'active' | 'pending' | 'archived' | 'superseded';
+type MemorySource = 'manual' | 'extraction';
+
+interface Memory {
+  id: string; // uuid
+  userId: string; // uuid
+  scope: 'personal' | 'professional';
+  space: MoraSpace; // in practice never 'direct' | 'hybrid' for a Memory
+  kind: MemoryKind;
+  content: string;
+  importance: number; // 0..1
+  confidence: number; // 0..1
+  source: MemorySource;
+  sourceId: string | null; // uuid of the message this was extracted from, if any
+  status: MemoryStatus;
+  validFrom: string;
+  validUntil: string | null;
+  lastAccessedAt: string | null;
+  accessCount: number;
+  supersededById: string | null; // uuid of the memory that replaced this one, if superseded
+  embeddingModel: string | null; // null until embedded, or forever with no embedding provider
+  embeddingDimensions: number | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  // Note: the raw embedding vector is NEVER present in API responses.
+}
+
+interface ProfileFact {
+  id: string;
+  userId: string;
+  scope: 'personal' | 'professional';
+  space: MoraSpace;
+  key: string;
+  value: string;
+  confidence: number; // 0..1
+  source: string;
+  status: 'active' | 'archived' | 'superseded';
+  validFrom: string;
+  validUntil: string | null;
+  supersededById: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type EntityType = 'person' | 'company' | 'client' | 'project' | 'place' | 'equipment' | 'object';
+
+interface Entity {
+  id: string;
+  userId: string;
+  scope: 'personal' | 'professional';
+  space: MoraSpace;
+  type: EntityType;
+  name: string;
+  aliases: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ConversationSummary {
+  id: string;
+  conversationId: string;
+  userId: string;
+  scope: MoraScope;
+  space: MoraSpace;
+  summary: string;
+  fromMessageId: string | null;
+  toMessageId: string | null;
+  messageCount: number;
+  approxTokenCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ---- Error shape (every endpoint) ------------------------------------------

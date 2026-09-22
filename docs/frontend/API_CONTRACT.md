@@ -1,4 +1,4 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
@@ -236,8 +236,171 @@ per failed field).
 
 ---
 
+## Memories (Phase C)
+
+Every endpoint below is Bearer-authenticated and **always** scoped to the caller's own
+`userId` server-side — there is no way to request another user's data, even by guessing an id
+(`403`/`404` instead).
+
+### `GET /api/v1/memories`
+- **Query params** (all optional): `scope` (`personal|professional`), `space`
+  (`personal|general|logistiga|piston|code`), `kind`
+  (`fact|preference|person|company|decision|procedure|event|project|habit`), `status`
+  (`active|pending|archived|superseded`, **defaults to `active`** if omitted), `search`
+  (case-insensitive substring match over `content`).
+- **Success — 200**: array of Memory objects (see below), newest-updated first, capped at 100.
+- **Errors**: `401`, `400` (invalid enum value for scope/space/kind/status).
+
+### `GET /api/v1/memories/:id`
+- **Success — 200**: one Memory object.
+- **Errors**: `401`, `403` (not yours), `404`.
+
+### `POST /api/v1/memories`
+- **Body**:
+  ```json
+  {
+    "scope": "personal",
+    "space": "personal",
+    "kind": "preference",
+    "content": "Préfère recevoir ses rappels de façon courte et directe",
+    "importance": 0.7,
+    "confidence": 0.8,
+    "metadata": {}
+  }
+  ```
+  `scope`/`space`/`kind` required (see enums above). `content`: 1–4000 chars, required.
+  `importance`/`confidence`: optional, 0–1, default `0.5` each. `metadata`: optional free-form
+  object.
+- **Success — 201**: the created Memory, `status: "active"`, `source: "manual"`. An embedding
+  job is queued in the background (see "LLM/embedding configuration" below) — the response
+  never includes an embedding.
+- **Errors**: `400` (validation), `401`.
+
+### `PATCH /api/v1/memories/:id`
+- **Body** (all optional): `content`, `importance`, `confidence`, `validUntil` (ISO date),
+  `metadata`. Does **not** accept `status` — use the archive endpoint for that.
+- **Success — 200**: the updated Memory. Changing `content` re-queues the embedding job.
+- **Errors**: `400`, `401`, `403`, `404`.
+
+### `POST /api/v1/memories/:id/archive`
+- **Success — 201**: the Memory with `status: "archived"`.
+- **Errors**: `401`, `403`, `404`.
+
+**Memory object shape:**
+```json
+{
+  "id": "uuid",
+  "userId": "uuid",
+  "scope": "personal",
+  "space": "personal",
+  "kind": "preference",
+  "content": "Préfère recevoir ses rappels de façon courte et directe",
+  "importance": 0.7,
+  "confidence": 0.8,
+  "source": "manual",
+  "sourceId": null,
+  "status": "active",
+  "validFrom": "2026-09-22T12:00:00.000Z",
+  "validUntil": null,
+  "lastAccessedAt": null,
+  "accessCount": 0,
+  "supersededById": null,
+  "embeddingModel": null,
+  "embeddingDimensions": null,
+  "metadata": {},
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+Note: there is **no `embedding` field in any API response** — the vector itself is never
+serialized to JSON (it lives only in Postgres/pgvector). `embeddingModel`/`embeddingDimensions`
+are `null` until the background embedding job completes (or forever, if no embedding provider
+is configured — see below).
+
+There is **no supersede endpoint** in Phase C: superseding (replacing an old memory with a new
+one, keeping history) happens automatically via the background extraction pipeline when it
+detects a near-duplicate/contradicting fact. A superseded memory keeps `status: "superseded"`
+and its `supersededById` points at the replacement; it is excluded from the default (`status`
+unset → `active`) list but still fetchable directly by id.
+
+### `GET /api/v1/profile-facts`
+- **Query params** (optional): `scope`, `space`, `status` (default `active`).
+- **Success — 200**: array of ProfileFact objects (stable profile-level facts — preferences,
+  habits, relationships — distinct from the more numerous, conversation-sourced Memory rows).
+  ```json
+  [
+    {
+      "id": "uuid",
+      "userId": "uuid",
+      "scope": "personal",
+      "space": "personal",
+      "key": "communication_style",
+      "value": "concise",
+      "confidence": 0.8,
+      "source": "manual",
+      "status": "active",
+      "validFrom": "...",
+      "validUntil": null,
+      "supersededById": null,
+      "metadata": {},
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
+  ]
+  ```
+- **Errors**: `401`.
+- **No POST/PATCH endpoint yet** — profile facts are read-only via the API in Phase C.
+
+### `GET /api/v1/entities`
+- **Query params** (optional): `scope`, `space`, `type`
+  (`person|company|client|project|place|equipment|object`).
+- **Success — 200**: array of Entity objects (people/companies/etc. referenced by memories).
+  ```json
+  [
+    { "id": "uuid", "userId": "uuid", "scope": "professional", "space": "logistiga",
+      "type": "company", "name": "Logistiga", "aliases": [], "metadata": {},
+      "createdAt": "...", "updatedAt": "..." }
+  ]
+  ```
+- **Errors**: `401`.
+- **No POST endpoint yet** — entities are created only internally by the extraction pipeline
+  (deduped by `userId+scope+space+type+name`) and are read-only via the API.
+
+### `GET /api/v1/conversation-summaries`
+- **Query params**: `conversationId` (optional UUID) — narrows to one conversation; omit to
+  list all of the caller's summaries.
+- **Success — 200**: array. A conversation can have **up to one summary per (scope, space)**
+  combination it has touched (summaries stay scope-isolated, same as memories).
+  ```json
+  [
+    { "id": "uuid", "conversationId": "uuid", "userId": "uuid", "scope": "personal",
+      "space": "personal", "summary": "L'utilisateur organise le rendez-vous de sa fille...",
+      "fromMessageId": "uuid", "toMessageId": "uuid", "messageCount": 24,
+      "approxTokenCount": 180, "createdAt": "...", "updatedAt": "..." }
+  ]
+  ```
+- **Errors**: `401`.
+- A summary only appears once a conversation has accumulated enough messages in that
+  scope/space (`MORA_SUMMARY_MESSAGE_THRESHOLD`, default 20) **and** an LLM provider is
+  configured — with no LLM, this list stays empty indefinitely (never an error, just no data).
+
+## LLM / embedding configuration — how it shows up in responses
+
+Nothing in the API tells the frontend directly whether an LLM or embedding provider is
+configured — infer it from behavior:
+- `POST /messages` response `response` text equal to the fixed "Configuration LLM manquante…"
+  placeholder ⇒ no LLM configured.
+- A Memory's `embeddingModel`/`embeddingDimensions` staying `null` well after creation ⇒ no
+  embedding provider configured (or it failed — the app never surfaces which, by design: the
+  memory is still fully usable via text search either way).
+- `GET /conversation-summaries` staying empty despite a long conversation ⇒ no LLM configured
+  (summaries need one).
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase B) for: audit entries, LLM configuration status/selection,
-conversation rename/delete, pagination cursors, cross-scope toggle, memory/embeddings,
-documents, tools/actions, WhatsApp/email/calendar, voice, avatar.
+No endpoint exists (as of Phase C) for: audit entries, LLM/embedding configuration
+status/selection, conversation rename/delete/title, pagination cursors, cross-scope toggle,
+POST/PATCH for profile-facts or entities, a supersede endpoint, documents/RAG, tools/actions,
+WhatsApp/email/calendar, voice, avatar.

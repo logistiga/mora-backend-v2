@@ -10,10 +10,14 @@ import { AuthModule } from './auth/auth.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/configuration.js';
+import { ContextModule } from './context/context.module.js';
 import { ConversationsModule } from './conversations/conversations.module.js';
 import { DatabaseModule } from './database/database.module.js';
+import { EmbeddingModule } from './embedding/embedding.module.js';
 import { HealthModule } from './health/health.module.js';
 import { LlmModule } from './llm/llm.module.js';
+import { MemoryModule } from './memory/memory.module.js';
+import { MemoryQueueModule } from './memory/queue/memory-queue.module.js';
 import { MessagesModule } from './messages/messages.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { QueueModule } from './queue/queue.module.js';
@@ -58,10 +62,14 @@ import { UsersModule } from './users/users.module.js';
     AuthModule,
     UsersModule,
     LlmModule,
+    EmbeddingModule,
     RouterModule,
+    ContextModule,
     AgentsModule,
     AuditModule,
     ConversationsModule,
+    MemoryModule,
+    MemoryQueueModule,
     OrchestratorModule,
     MessagesModule,
   ],
