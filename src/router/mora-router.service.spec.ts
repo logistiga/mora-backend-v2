@@ -24,6 +24,47 @@ describe('MoraRouterService', () => {
     expect(result.confidence).toBeGreaterThan(0.5);
   });
 
+  it('does not swallow a substantive message into "direct" just because it opens with a greeting (regression, Phase C.6)', async () => {
+    // Found via real end-to-end validation: this exact phrasing was
+    // previously misrouted to "direct" (canned reply) purely because it
+    // starts with "Bonjour", even though it carries a real personal
+    // preference — no LLM configured here, so it should land on the safe
+    // low-confidence default fallback, never the confident "greeting" path.
+    const result = await service.classify(
+      'Bonjour Mora. Je préfère que tu me répondes de façon concise, naturelle et directe.',
+    );
+    expect(result.method).not.toBe('rules');
+    expect(result.confidence).toBeLessThan(0.5);
+  });
+
+  it('lets a short greeting-only message still route as direct/greeting', async () => {
+    const short = await service.classify('Bonjour Mora, merci beaucoup !');
+    expect(short.route).toBe('direct');
+    expect(short.intent).toBe('greeting');
+    expect(short.method).toBe('rules');
+  });
+
+  it('lets the LLM fallback classify a substantive greeting-opened message once no rule matches', async () => {
+    llmServiceMock.complete.mockResolvedValue({
+      configured: true,
+      content: JSON.stringify({
+        route: 'personal',
+        space: 'personal',
+        intent: 'preference',
+        confidence: 0.8,
+      }),
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    const result = await service.classify(
+      'Bonjour Mora. Je préfère que tu me répondes de façon concise, naturelle et directe.',
+    );
+
+    expect(result.method).toBe('llm-fallback');
+    expect(result.route).toBe('personal');
+  });
+
   it('classifies a personal message as personal', async () => {
     const result = await service.classify("Rappelle-moi le rendez-vous de ma fille demain");
     expect(result.route).toBe('personal');

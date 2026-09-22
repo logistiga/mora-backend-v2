@@ -28,6 +28,10 @@ const PROFESSIONAL_GENERAL_PATTERN =
   /\b(travail|entreprise|client|facture|devis|r[ée]union|projet|coll[èe]gue|patron|contrat|budget|rapport)\b/i;
 
 const GREETING_PATTERN = /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|salam|ok|d'accord)\b/i;
+// A message must be this short (in words) for a leading greeting to route it
+// "direct" on its own — otherwise the greeting is just an opener on a
+// substantive message that deserves real routing (see GREETING_PATTERN use below).
+const GREETING_MAX_WORDS = 6;
 const FACTUAL_DIRECT_PATTERN = /\b(quelle heure|quel jour|quelle date)\b/i;
 
 const SENSITIVE_PATTERN =
@@ -124,7 +128,20 @@ export class MoraRouterService {
       });
     }
 
-    if (GREETING_PATTERN.test(text) || FACTUAL_DIRECT_PATTERN.test(text)) {
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
+
+    // GREETING_PATTERN only checks the START of the message ("Bonjour...")
+    // with no length limit, so a substantive message that happens to open
+    // with a greeting ("Bonjour, je préfère que tu me répondes de façon
+    // concise...") would otherwise be entirely swallowed into "direct"
+    // before its real content — personal/professional keywords, or the LLM
+    // fallback — ever gets a chance. Gating on a short word count keeps
+    // genuine small talk ("Bonjour", "Bonjour Mora") on the fast direct
+    // path while letting longer messages fall through. Found via real
+    // end-to-end validation (Phase C.6) with a live LLM configured.
+    const isShortGreeting = GREETING_PATTERN.test(text) && wordCount <= GREETING_MAX_WORDS;
+
+    if (isShortGreeting || FACTUAL_DIRECT_PATTERN.test(text)) {
       return this.buildResult({
         route: 'direct',
         scope: 'direct',
@@ -136,7 +153,6 @@ export class MoraRouterService {
       });
     }
 
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
     if (wordCount <= 3) {
       // Very short, no keyword signal at all (e.g. "ça va ?", "et toi") —
       // treat as direct rather than guessing a scope.

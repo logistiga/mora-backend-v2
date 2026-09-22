@@ -21,7 +21,13 @@ const EXTRACTION_SYSTEM_PROMPT =
   `"kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}. ` +
   "Ignore les salutations, remerciements, confirmations triviales, demandes ponctuelles sans intérêt futur. " +
   'Ne mémorise que: préférences durables, décisions, personnes/sociétés importantes, projets, habitudes, ' +
-  'procédures, événements marquants, faits durables. Si rien ne mérite d\'être retenu, réponds "[]".';
+  "procédures, événements marquants, faits durables. Cela inclut explicitement les préférences de " +
+  "communication de l'utilisateur (ex: le ton, la longueur, le style de réponse qu'il souhaite de la " +
+  'part de l\'assistant) — ce sont des préférences durables (kind: "preference") au même titre que ' +
+  "les autres, même si elles s'adressent à l'assistant plutôt qu'à un tiers. " +
+  'Exemple : utilisateur dit "je préfère des réponses courtes et directes" → ' +
+  '[{"kind":"preference","content":"Préfère des réponses courtes et directes de la part de Mora","importance":0.7,"confidence":0.8}]. ' +
+  'Si rien ne mérite d\'être retenu, réponds "[]".';
 
 @Injectable()
 export class MemoryExtractionService {
