@@ -90,6 +90,24 @@ export class EnvironmentVariables {
 
   @IsInt()
   THROTTLE_LIMIT: number = 100;
+
+  // Optional: LLM provider config. Absent by design in most environments —
+  // the app must keep working (LlmService degrades gracefully) without it.
+  @IsOptional()
+  @IsString()
+  OPENAI_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_BASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_MODEL?: string;
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  MORA_CROSS_SCOPE_ENABLED?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

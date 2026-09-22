@@ -4,13 +4,20 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@ne
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
+import { AgentsModule } from './agents/agents.module.js';
+import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/configuration.js';
+import { ConversationsModule } from './conversations/conversations.module.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { LlmModule } from './llm/llm.module.js';
+import { MessagesModule } from './messages/messages.module.js';
+import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
 import { QueueModule } from './queue/queue.module.js';
+import { RouterModule } from './router/router.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
@@ -50,6 +57,13 @@ import { UsersModule } from './users/users.module.js';
     HealthModule,
     AuthModule,
     UsersModule,
+    LlmModule,
+    RouterModule,
+    AgentsModule,
+    AuditModule,
+    ConversationsModule,
+    OrchestratorModule,
+    MessagesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
