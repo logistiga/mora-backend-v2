@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C)
+# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -184,6 +184,75 @@ interface ConversationSummary {
   updatedAt: string;
 }
 
+// ---- AI Providers (Phase C.5) ----------------------------------------------
+
+type ProviderKind = 'chat' | 'embedding' | 'vision' | 'stt' | 'tts' | 'image' | 'avatar' | string;
+// Common `provider` values (not a closed list — any string is accepted):
+type KnownProvider =
+  | 'openai' | 'anthropic' | 'groq' | 'deepseek' | 'gemini' | 'mistral'
+  | 'openrouter' | 'ollama' | 'custom_openai_compatible' | string;
+
+interface ProviderCapabilities {
+  chat?: boolean;
+  tools?: boolean;
+  streaming?: boolean;
+  vision?: boolean;
+  embeddings?: boolean;
+  jsonMode?: boolean;
+  dimensions?: number;
+  [key: string]: unknown;
+}
+
+interface ProviderSettings {
+  maxTokens?: number;
+  timeoutMs?: number;
+  maxConcurrency?: number;
+  [key: string]: unknown;
+}
+
+interface AiProvider {
+  id: string;
+  name: string;
+  provider: KnownProvider;
+  kind: ProviderKind;
+  baseUrl: string | null;
+  model: string;
+  hasKey: boolean;
+  keyHint: string | null; // last 4 chars only — NEVER the full key
+  isActive: boolean;
+  isDefault: boolean;
+  scope: 'personal' | 'professional' | null; // null = applies to every scope of this kind
+  space: string | null; // null = applies to every space of this scope
+  capabilities: ProviderCapabilities | null;
+  settings: ProviderSettings | null;
+  priority: number;
+  lastTestedAt: string | null;
+  lastTestStatus: 'success' | 'failure' | null;
+  lastTestMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  // NEVER present: apiKey, apiKeyEncrypted, apiKeyIv, apiKeyAuthTag.
+}
+
+interface TestProviderResult {
+  success: boolean;
+  message: string; // human-readable, sanitized — safe to render directly
+}
+
+interface AiProviderStatus {
+  chatConfigured: boolean;
+  embeddingConfigured: boolean;
+  visionConfigured: boolean;
+  sttConfigured: boolean;
+  ttsConfigured: boolean;
+  imageConfigured: boolean;
+  avatarConfigured: boolean;
+  defaults: Record<
+    string, // kind
+    { id: string; name: string; provider: string; model: string } | null
+  >;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -203,3 +272,7 @@ interface ApiError {
   production UI logic beyond what's documented in `API_CONTRACT.md`.
 - There is no `WebSocket`/`SSE` response type yet — Phase B is REST-only, request/response.
   Real-time transport is planned but not implemented (see `docs/ROADMAP.md`).
+- `AiProvider` has no `apiKey` field on the wire, ever — don't add one to a local type either;
+  a form component should keep a plaintext key entirely in local component state and send it
+  only in the `POST`/`PATCH` request body, never store it in app state/cache alongside the rest
+  of the provider object.

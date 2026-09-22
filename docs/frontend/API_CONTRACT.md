@@ -1,4 +1,4 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
@@ -398,9 +398,140 @@ configured — infer it from behavior:
 
 ---
 
+## AI Providers (Phase C.5)
+
+Every endpoint below is Bearer-authenticated and scoped to the caller's own `userId` — no
+endpoint accepts a client-supplied `userId`. **No response, ever, contains the API key** — only
+`hasKey` (boolean) and `keyHint` (last 4 characters).
+
+### `GET /api/v1/ai-providers`
+- **Query params** (optional): `kind` (`chat|embedding|vision|stt|tts|image|avatar|...`),
+  `scope` (`personal|professional`), `space`, `isActive` (`"true"|"false"`).
+- **Success — 200**: array, ordered `isDefault` desc, then `priority` desc, then
+  `updatedAt` desc. See `AiProvider` shape below.
+- **Errors**: `401`.
+
+### `GET /api/v1/ai-providers/:id`
+- **Success — 200**: one `AiProvider`. **Errors**: `401`, `403` (not yours), `404`.
+
+### `POST /api/v1/ai-providers`
+- **Body**:
+  ```json
+  {
+    "name": "My OpenAI",
+    "provider": "openai",
+    "kind": "chat",
+    "model": "gpt-4o-mini",
+    "baseUrl": "https://api.openai.com/v1",
+    "apiKey": "sk-...",
+    "isActive": true,
+    "isDefault": false,
+    "scope": "professional",
+    "space": "logistiga",
+    "capabilities": { "chat": true, "tools": true, "streaming": true },
+    "settings": { "maxTokens": 1024, "timeoutMs": 30000 },
+    "priority": 0
+  }
+  ```
+  Required: `name`, `provider`, `kind`, `model`. Everything else optional — `apiKey` may be
+  omitted entirely for a no-auth-needed local provider (e.g. Ollama). `baseUrl`, when given,
+  must be a URL with a scheme (`http://` or `https://` — a bare hostname is rejected).
+- **Success — 201**: the created provider (public view — see `AiProvider` shape). If
+  `isDefault: true`, any other default for the same (kind, scope, space) is unset first
+  (transactional; also enforced by a DB constraint).
+- **Errors**: `400` (validation), `401`.
+
+### `PATCH /api/v1/ai-providers/:id`
+- **Body**: any subset of the create fields except `provider`/`kind` (immutable after
+  creation). **Omit `apiKey` to keep the existing key untouched.** Sending a new `apiKey`
+  rotates it (re-encrypted with a fresh IV) — the old one is gone, never returned.
+- **Success — 200**: the updated provider. **Errors**: `400`, `401`, `403`, `404`.
+
+### `POST /api/v1/ai-providers/:id/enable` / `/disable`
+- **Success — 201**: the updated provider (`isActive: true`/`false`). A disabled provider is
+  never selected by the chat/embedding pipeline. **Errors**: `401`, `403`, `404`.
+
+### `POST /api/v1/ai-providers/:id/set-default`
+- **Success — 201**: the updated provider (`isDefault: true`); any sibling default for the same
+  (kind, scope, space) is unset. **Errors**: `401`, `403`, `404`.
+
+### `POST /api/v1/ai-providers/:id/test`
+- Makes one real, minimal call through the actual provider (a 1-token chat completion, or an
+  embedding of the word "test") — no large prompt, no wasted tokens.
+- **Success — 201**: `{ "success": true, "message": "Chat completion succeeded" }` (or
+  `false` with a short, sanitized failure message — **never** an HTTP error status for a failed
+  test; the test itself succeeded in running, its *result* is what's reported).
+  ```json
+  { "success": false, "message": "Chat provider request failed with status 401: ..." }
+  ```
+  Also updates the provider's `lastTestedAt`/`lastTestStatus`/`lastTestMessage` (visible on
+  subsequent `GET`s). **Errors**: `401`, `403`, `404`.
+
+### `DELETE /api/v1/ai-providers/:id`
+- **Success — 204**: no body. This is a **real, hard delete** (not archive) — see
+  `FRONTEND_HANDOFF.md` §12 for why, and warrants a confirm dialog in the UI.
+- **Errors**: `401`, `403`, `404`.
+
+### `GET /api/v1/ai-providers/status`
+- **Success — 200**:
+  ```json
+  {
+    "chatConfigured": true,
+    "embeddingConfigured": true,
+    "visionConfigured": false,
+    "sttConfigured": false,
+    "ttsConfigured": false,
+    "imageConfigured": false,
+    "avatarConfigured": false,
+    "defaults": {
+      "chat": { "id": "uuid", "name": "My OpenAI", "provider": "openai", "model": "gpt-4o-mini" },
+      "embedding": { "id": "uuid", "name": "My Embeddings", "provider": "openai", "model": "text-embedding-3-small" },
+      "vision": null, "stt": null, "tts": null, "image": null, "avatar": null
+    }
+  }
+  ```
+- **Errors**: `401`.
+
+**`AiProvider` response shape** (every endpoint above except `/test` and `/status`):
+```json
+{
+  "id": "uuid",
+  "name": "My OpenAI",
+  "provider": "openai",
+  "kind": "chat",
+  "baseUrl": null,
+  "model": "gpt-4o-mini",
+  "hasKey": true,
+  "keyHint": "7890",
+  "isActive": true,
+  "isDefault": true,
+  "scope": null,
+  "space": null,
+  "capabilities": {},
+  "settings": {},
+  "priority": 0,
+  "lastTestedAt": "2026-09-22T18:00:00.000Z",
+  "lastTestStatus": "success",
+  "lastTestMessage": "Chat completion succeeded",
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+Note what's **absent**: `apiKeyEncrypted`, `apiKeyIv`, `apiKeyAuthTag`, and any plaintext key
+field — these never leave the server.
+
+### Effect on other endpoints
+`POST /api/v1/messages` (personal/professional routes) and the background memory-embedding job
+now try the caller's own AI Provider (matching kind + best scope/space match) **before** the
+legacy env fallback (`OPENAI_API_KEY`/`MORA_EMBEDDING_*`). Nothing else about those endpoints'
+request/response shape changed.
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase C) for: audit entries, LLM/embedding configuration
-status/selection, conversation rename/delete/title, pagination cursors, cross-scope toggle,
-POST/PATCH for profile-facts or entities, a supersede endpoint, documents/RAG, tools/actions,
-WhatsApp/email/calendar, voice, avatar.
+No endpoint exists (as of Phase C.5) for: audit entries, conversation rename/delete/title,
+pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
+endpoint, documents/RAG, tools/actions, WhatsApp/email/calendar, voice, avatar, a "reveal API
+key" endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar provider testing
+(no adapters built yet, `POST /:id/test` returns `success: false` for those kinds today).

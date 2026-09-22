@@ -42,7 +42,14 @@ export class MoraRouterService {
 
   constructor(private readonly llmService: LlmService) {}
 
-  async classify(message: string): Promise<RouterDecisionResult> {
+  /**
+   * `userId` is optional and, when given, lets the LLM fallback use that
+   * user's own AiProvider (Phase C.5) instead of only the env-configured one
+   * — see LlmService's selection order. `classifyWithLlm` itself checks
+   * `response.configured` before using the result, so no LLM call is ever
+   * made when nothing (env or DB) is actually configured for this user.
+   */
+  async classify(message: string, userId?: string): Promise<RouterDecisionResult> {
     const text = message.trim();
     const rulesResult = this.classifyWithRules(text);
     if (rulesResult) {
@@ -52,11 +59,9 @@ export class MoraRouterService {
     // No confident deterministic rule matched — only reach for the LLM when
     // one is actually configured; otherwise use a safe, low-confidence default
     // that never guesses into personal/professional territory.
-    if (this.llmService.isConfigured()) {
-      const llmResult = await this.classifyWithLlm(text);
-      if (llmResult) {
-        return llmResult;
-      }
+    const llmResult = await this.classifyWithLlm(text, userId);
+    if (llmResult) {
+      return llmResult;
     }
 
     return this.defaultFallback(text);
@@ -149,20 +154,23 @@ export class MoraRouterService {
     return null;
   }
 
-  private async classifyWithLlm(text: string): Promise<RouterDecisionResult | null> {
-    const response = await this.llmService.complete({
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You classify a user message for a routing system. Respond with ONLY a JSON object: ' +
-            '{"route":"personal|professional|hybrid|direct","space":"personal|general|logistiga|piston|code|hybrid|direct","intent":"string","confidence":0-1}. No prose.',
-        },
-        { role: 'user', content: text },
-      ],
-      temperature: 0,
-      maxTokens: 150,
-    });
+  private async classifyWithLlm(text: string, userId?: string): Promise<RouterDecisionResult | null> {
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You classify a user message for a routing system. Respond with ONLY a JSON object: ' +
+              '{"route":"personal|professional|hybrid|direct","space":"personal|general|logistiga|piston|code|hybrid|direct","intent":"string","confidence":0-1}. No prose.',
+          },
+          { role: 'user', content: text },
+        ],
+        temperature: 0,
+        maxTokens: 150,
+      },
+      { userId, route: 'router-classification' },
+    );
 
     if (!response.configured) {
       return null;

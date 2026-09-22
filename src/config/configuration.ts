@@ -42,6 +42,7 @@ export interface AppConfig {
     summaryMessageThreshold: number;
   };
   crossScopeEnabled: boolean;
+  encryptionKey?: string;
 }
 
 export default (): { app: AppConfig } => ({
@@ -98,5 +99,11 @@ export default (): { app: AppConfig } => ({
     // Phase B security default: hybrid requests never combine personal +
     // professional context/actions unless this is explicitly turned on.
     crossScopeEnabled: process.env.MORA_CROSS_SCOPE_ENABLED === 'true',
+    // Phase C.5: master key for AiProvider secret encryption (AES-256-GCM).
+    // Optional at boot (the app must still start with none configured — see
+    // AGENTS §1) but required the moment any code tries to encrypt/decrypt a
+    // provider's API key; SecretEncryptionService.validateEncryptionKey()
+    // throws a clear error at that point instead.
+    encryptionKey: process.env.MORA_ENCRYPTION_KEY || undefined,
   },
 });

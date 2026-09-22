@@ -9,7 +9,7 @@ describe('MoraRouterService', () => {
   beforeEach(() => {
     llmServiceMock = {
       isConfigured: vi.fn(() => false),
-      complete: vi.fn(),
+      complete: vi.fn(async () => ({ configured: false, content: '', provider: 'none', model: null })),
     };
     service = new MoraRouterService(llmServiceMock as unknown as LlmService);
   });
@@ -68,19 +68,21 @@ describe('MoraRouterService', () => {
     expect(result.securityLevel).toBe('high');
   });
 
-  it('falls back to a low-confidence direct default when no LLM is configured and no rule matches', async () => {
-    llmServiceMock.isConfigured.mockReturnValue(false);
+  it('falls back to a low-confidence direct default when the LLM (env or DB) is not configured and no rule matches', async () => {
+    // complete() IS attempted (Phase C.5: whether an LLM is available now
+    // depends on the calling user's own DB providers too, not just env, so
+    // the router can no longer pre-check with a synchronous isConfigured())
+    // but LlmService itself reports back "not configured" — never a network call.
     const ambiguous =
       'Considérant la situation actuelle et les circonstances environnantes qui évoluent';
     const result = await service.classify(ambiguous);
     expect(result.method).toBe('default-fallback');
     expect(result.route).toBe('direct');
     expect(result.confidence).toBeLessThan(0.5);
-    expect(llmServiceMock.complete).not.toHaveBeenCalled();
+    expect(llmServiceMock.complete).toHaveBeenCalledOnce();
   });
 
-  it('uses the LLM fallback only when configured and no rule matched', async () => {
-    llmServiceMock.isConfigured.mockReturnValue(true);
+  it('uses the LLM fallback when it reports back configured, with no rule matched', async () => {
     llmServiceMock.complete.mockResolvedValue({
       configured: true,
       content: JSON.stringify({
@@ -103,8 +105,7 @@ describe('MoraRouterService', () => {
     expect(result.confidence).toBe(0.66);
   });
 
-  it('does not call the LLM for a simple deterministic message even when configured', async () => {
-    llmServiceMock.isConfigured.mockReturnValue(true);
+  it('does not call the LLM for a simple deterministic message', async () => {
     await service.classify('Bonjour');
     expect(llmServiceMock.complete).not.toHaveBeenCalled();
   });

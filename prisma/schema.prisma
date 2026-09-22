@@ -5,6 +5,8 @@
 // Phase C: intelligent memory (Memory, Entity, MemoryEntity,
 // ConversationSummary, ProfileFact) — see docs/ARCHITECTURE.md for the
 // retrieval/embedding/extraction design.
+// Phase C.5: AI provider manager (AiProvider, LlmCall) — multi-LLM/embedding
+// providers with encrypted API keys. See docs/ARCHITECTURE.md.
 
 generator client {
   provider        = "prisma-client"
@@ -41,6 +43,7 @@ model User {
   memories      Memory[]
   entities      Entity[]
   profileFacts  ProfileFact[]
+  aiProviders   AiProvider[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -323,4 +326,88 @@ model ProfileFact {
 
   @@index([userId, scope, space, status])
   @@map("profile_facts")
+}
+
+// ============================================================================
+// Phase C.5 — AI Provider Manager
+// `provider` and `kind` are free strings, not enums, so new providers
+// (Anthropic, Gemini, Groq, ...) or usage kinds (vision, stt, tts, ...) never
+// need a migration — validated in the app layer (see src/ai-providers/).
+//
+// The API key is never stored in plaintext: `apiKeyEncrypted`/`apiKeyIv`/
+// `apiKeyAuthTag` hold an AES-256-GCM ciphertext (see SecretEncryptionService)
+// and only `apiKeyHint` (last 4 chars) is safe to ever return from the API.
+// ============================================================================
+
+model AiProvider {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name     String // display name, e.g. "My OpenAI"
+  provider String // openai | anthropic | groq | deepseek | gemini | mistral | openrouter | ollama | custom_openai_compatible | ...
+  kind     String // chat | embedding | vision | stt | tts | image | avatar | ...
+  baseUrl  String? @map("base_url")
+  model    String
+
+  // Encrypted secret (all three null together when the provider needs no key,
+  // e.g. a local Ollama endpoint with no auth).
+  apiKeyEncrypted   String? @map("api_key_encrypted")
+  apiKeyIv          String? @map("api_key_iv")
+  apiKeyAuthTag     String? @map("api_key_auth_tag")
+  apiKeyHint        String? @map("api_key_hint") // last 4 chars only, never the full key
+  encryptionVersion Int     @default(1) @map("encryption_version")
+
+  isActive  Boolean @default(true) @map("is_active")
+  isDefault Boolean @default(false) @map("is_default")
+
+  // Optional scoping: a global (null/null) provider is the fallback for any
+  // scope/space of this kind; a scoped one (e.g. professional/logistiga) is
+  // preferred by AiModelSelectorService when it matches exactly.
+  scope String?
+  space String?
+
+  capabilities Json? // e.g. { chat:true, tools:true, streaming:true, vision:true, jsonMode:true }
+  settings     Json? // e.g. { maxTokens, timeoutMs, maxConcurrency }
+  priority     Int   @default(0) // higher wins among otherwise-equal candidates
+
+  lastTestedAt   DateTime? @map("last_tested_at")
+  lastTestStatus String?   @map("last_test_status") // 'success' | 'failure'
+  lastTestMessage String?  @map("last_test_message")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, kind, isActive])
+  @@map("ai_providers")
+}
+
+// One row per LLM/embedding call attempted through the provider system —
+// observability only. Never stores the API key, the raw prompt, or the raw
+// completion (see AiProviderService / LlmService for what's logged instead).
+model LlmCall {
+  id         String  @id @default(uuid()) @db.Uuid
+  userId     String? @map("user_id") @db.Uuid
+  providerId String? @map("provider_id") @db.Uuid
+
+  kind  String
+  model String
+  route String?
+  scope String?
+  space String?
+
+  promptTokens     Int? @map("prompt_tokens")
+  completionTokens Int? @map("completion_tokens")
+  totalTokens      Int? @map("total_tokens")
+
+  latencyMs    Int    @map("latency_ms")
+  status       String // 'success' | 'error'
+  errorCode    String? @map("error_code")
+  costEstimate Float?  @map("cost_estimate")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([providerId])
+  @@map("llm_calls")
 }
