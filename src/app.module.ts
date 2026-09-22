@@ -1,6 +1,6 @@
-import { Module } from '@nestjs/common';
+import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
@@ -54,6 +54,13 @@ import { UsersModule } from './users/users.module.js';
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    // Without this, @Exclude()/@Expose() on entities like UserEntity are inert
+    // and fields such as passwordHash would be serialized as-is in responses.
+    {
+      provide: APP_INTERCEPTOR,
+      useFactory: (reflector: Reflector) => new ClassSerializerInterceptor(reflector),
+      inject: [Reflector],
+    },
     {
       provide: APP_PIPE,
       useValue: new ValidationPipe({

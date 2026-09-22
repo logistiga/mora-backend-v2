@@ -44,8 +44,18 @@ services:
     env_file:
       - .env
     environment:
+      # This base file is the production shape: force NODE_ENV=production
+      # regardless of what .env says, so the pino-pretty dev-only transport
+      # (absent from the production image's node_modules) is never requested
+      # and Swagger stays off. docker-compose.override.yml re-overrides this
+      # to "development" for local dev.
+      NODE_ENV: production
       POSTGRES_HOST: mora-postgres
       REDIS_HOST: mora-redis
+      # DATABASE_URL is a standalone literal (Prisma reads it directly, not
+      # POSTGRES_HOST/PORT), so it must be re-pointed at the in-network
+      # hostname too, or the API container would try "localhost" (itself).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-mora}:${POSTGRES_PASSWORD:-changeme}@mora-postgres:5432/${POSTGRES_DB:-mora}?schema=public
     depends_on:
       mora-postgres:
         condition: service_healthy
