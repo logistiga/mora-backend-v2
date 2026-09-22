@@ -1,0 +1,65 @@
+services:
+  mora-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mora-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-mora}
+    volumes:
+      - mora_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    networks:
+      - mora-internal
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-mora} -d ${POSTGRES_DB:-mora}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published to the host in production; see docker-compose.override.yml
+    # for the local-dev port mapping.
+
+  mora-redis:
+    image: redis:7-alpine
+    container_name: mora-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - mora_redis_data:/data
+    networks:
+      - mora-internal
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mora-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mora-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: mora-postgres
+      REDIS_HOST: mora-redis
+    depends_on:
+      mora-postgres:
+        condition: service_healthy
+      mora-redis:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+    networks:
+      - mora-internal
+
+networks:
+  mora-internal:
+    driver: bridge
+
+volumes:
+  mora_postgres_data:
+  mora_redis_data:

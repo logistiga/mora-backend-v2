@@ -1,0 +1,22 @@
+# Auto-loaded by `docker compose up` alongside docker-compose.yml.
+# Local-dev-only convenience: exposes Postgres/Redis ports on the host so you
+# can connect with a GUI client, and hot-reloads the API from source.
+# Do NOT deploy this file — production compose should use docker-compose.yml only.
+services:
+  mora-postgres:
+    ports:
+      - '5432:5432'
+
+  mora-redis:
+    ports:
+      - '6379:6379'
+
+  mora-api:
+    build:
+      target: build
+    command: ['npm', 'run', 'start:dev']
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+    environment:
+      NODE_ENV: development
