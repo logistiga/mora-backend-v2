@@ -21,6 +21,14 @@ export interface AppConfig {
     ttl: number;
     limit: number;
   };
+  llm: {
+    openai: {
+      apiKey?: string;
+      baseUrl?: string;
+      model?: string;
+    };
+  };
+  crossScopeEnabled: boolean;
 }
 
 export default (): { app: AppConfig } => ({
@@ -47,5 +55,15 @@ export default (): { app: AppConfig } => ({
       ttl: parseInt(process.env.THROTTLE_TTL ?? '60', 10),
       limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
     },
+    llm: {
+      openai: {
+        apiKey: process.env.OPENAI_API_KEY || undefined,
+        baseUrl: process.env.OPENAI_BASE_URL || undefined,
+        model: process.env.OPENAI_MODEL || undefined,
+      },
+    },
+    // Phase B security default: hybrid requests never combine personal +
+    // professional context/actions unless this is explicitly turned on.
+    crossScopeEnabled: process.env.MORA_CROSS_SCOPE_ENABLED === 'true',
   },
 });

@@ -1,5 +1,7 @@
 // Mora Backend v2 — Prisma schema
-// Phase A: core foundation only (User + auth). No memory/embedding models yet.
+// Phase A: core foundation (User + auth).
+// Phase B: router/agents/orchestrator plumbing (Conversation, Message,
+// RouterDecision, AuditEntry, Setting). No memory/embedding models yet.
 // See docs/ROADMAP.md for what pgvector-backed models arrive in Phase C.
 
 generator client {
@@ -33,6 +35,7 @@ model User {
   isActive     Boolean  @default(true) @map("is_active")
 
   refreshTokens RefreshToken[]
+  conversations Conversation[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -54,4 +57,97 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// route/scope/space/intent/complexity/securityLevel are kept as plain strings
+// (validated in the app layer — see src/router/router.types.ts) rather than DB
+// enums, so new professional "spaces" can be added without a migration.
+model Conversation {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title String?
+
+  messages        Message[]
+  routerDecisions RouterDecision[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role     MessageRole
+  content  String
+  scope    String // 'direct' | 'personal' | 'professional' | 'hybrid'
+  space    String // 'direct' | 'personal' | 'general' | 'logistiga' | 'piston' | 'code' | 'hybrid'
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@map("messages")
+}
+
+// One row per routing decision the MoraRouterService made for a given user
+// message — kept even if the message/conversation is later removed, since
+// this is itself an audit trail of routing behavior.
+model RouterDecision {
+  id             String       @id @default(uuid()) @db.Uuid
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String?      @map("message_id") @db.Uuid
+
+  route         String
+  scope         String
+  space         String
+  intent        String
+  complexity    String
+  securityLevel String @map("security_level")
+  confidence    Float
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@map("router_decisions")
+}
+
+model AuditEntry {
+  id             String  @id @default(uuid()) @db.Uuid
+  userId         String? @map("user_id") @db.Uuid
+  conversationId String? @map("conversation_id") @db.Uuid
+
+  action   String
+  scope    String?
+  space    String?
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([conversationId])
+  @@map("audit_entries")
+}
+
+model Setting {
+  key   String @id
+  value Json
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
 }

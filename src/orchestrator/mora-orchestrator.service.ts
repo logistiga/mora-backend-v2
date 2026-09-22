@@ -1,0 +1,155 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PersonalAgentService } from '../agents/personal-agent.service.js';
+import { ProfessionalAgentService } from '../agents/professional-agent.service.js';
+import type { AgentUser } from '../agents/agent.types.js';
+import { AuditService } from '../audit/audit.service.js';
+import { ConfigService } from '@nestjs/config';
+import { ConversationsService } from '../conversations/conversations.service.js';
+import { RouterDecisionsService } from '../conversations/router-decisions.service.js';
+import { MessageRole } from '../generated/prisma/client.js';
+import { MoraRouterService } from '../router/mora-router.service.js';
+import type { RouterDecisionResult } from '../router/router.types.js';
+
+export interface OrchestratorInput {
+  user: AgentUser;
+  message: string;
+  conversationId?: string;
+}
+
+export interface OrchestratorResult {
+  conversationId: string;
+  messageId: string;
+  response: string;
+  route: RouterDecisionResult['route'];
+  scope: RouterDecisionResult['scope'];
+  space: RouterDecisionResult['space'];
+  confidence: number;
+}
+
+const HYBRID_BLOCKED_MESSAGE =
+  'Votre demande mélange des éléments personnels et professionnels. ' +
+  "Le mode cross-scope est désactivé par défaut : merci de reformuler séparément " +
+  "la partie personnelle et la partie professionnelle.";
+
+@Injectable()
+export class MoraOrchestratorService {
+  private readonly logger = new Logger(MoraOrchestratorService.name);
+  private readonly crossScopeEnabled: boolean;
+
+  constructor(
+    private readonly routerService: MoraRouterService,
+    private readonly personalAgent: PersonalAgentService,
+    private readonly professionalAgent: ProfessionalAgentService,
+    private readonly conversationsService: ConversationsService,
+    private readonly routerDecisionsService: RouterDecisionsService,
+    private readonly auditService: AuditService,
+    configService: ConfigService,
+  ) {
+    this.crossScopeEnabled = configService.get<boolean>('app.crossScopeEnabled') ?? false;
+  }
+
+  async handleMessage(input: OrchestratorInput): Promise<OrchestratorResult> {
+    const conversation = await this.conversationsService.getOrCreateConversation(
+      input.user.id,
+      input.conversationId,
+    );
+
+    const decision = await this.routerService.classify(input.message);
+
+    const userMessage = await this.conversationsService.addMessage({
+      conversationId: conversation.id,
+      role: MessageRole.USER,
+      content: input.message,
+      scope: decision.scope,
+      space: decision.space,
+      metadata: { intent: decision.intent, method: decision.method },
+    });
+
+    const { content: responseContent, metadata: responseMetadata } = await this.dispatch(
+      input.user,
+      input.message,
+      decision,
+      conversation.id,
+    );
+
+    const assistantMessage = await this.conversationsService.addMessage({
+      conversationId: conversation.id,
+      role: MessageRole.ASSISTANT,
+      content: responseContent,
+      scope: decision.scope,
+      space: decision.space,
+      metadata: responseMetadata,
+    });
+
+    await this.routerDecisionsService.save(conversation.id, userMessage.id, decision);
+
+    await this.auditService.log({
+      userId: input.user.id,
+      conversationId: conversation.id,
+      action: 'message_processed',
+      scope: decision.scope,
+      space: decision.space,
+      metadata: {
+        route: decision.route,
+        confidence: decision.confidence,
+        method: decision.method,
+        crossScopeBlocked: responseMetadata.crossScopeBlocked ?? false,
+      },
+    });
+
+    return {
+      conversationId: conversation.id,
+      messageId: assistantMessage.id,
+      response: responseContent,
+      route: decision.route,
+      scope: decision.scope,
+      space: decision.space,
+      confidence: decision.confidence,
+    };
+  }
+
+  private async dispatch(
+    user: AgentUser,
+    message: string,
+    decision: RouterDecisionResult,
+    conversationId: string,
+  ): Promise<{ content: string; metadata: Record<string, unknown> }> {
+    if (decision.route === 'direct') {
+      return { content: this.buildDirectReply(decision), metadata: { agent: 'direct' } };
+    }
+
+    if (decision.route === 'hybrid') {
+      if (!this.crossScopeEnabled) {
+        this.logger.debug('Hybrid request blocked: cross-scope is disabled');
+        return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true } };
+      }
+      // Cross-scope is explicitly enabled, but Phase B does not implement real
+      // hybrid merging (Personal+Professional combined context/actions) — that
+      // is out of scope here. Degrade safely rather than fabricate a merge.
+      return {
+        content:
+          "Le mode cross-scope est activé mais le traitement hybride combiné n'est pas " +
+          'encore implémenté (prévu à une phase ultérieure). Merci de reformuler séparément.',
+        metadata: { agent: 'hybrid', crossScopeBlocked: false, notImplemented: true },
+      };
+    }
+
+    if (decision.route === 'personal') {
+      const history = await this.conversationsService.getScopedHistory(conversationId, 'personal');
+      return this.personalAgent.handle({ user, message, routerDecision: decision, context: { history } });
+    }
+
+    const history = await this.conversationsService.getScopedHistory(conversationId, 'professional');
+    return this.professionalAgent.handle({ user, message, routerDecision: decision, context: { history } });
+  }
+
+  private buildDirectReply(decision: RouterDecisionResult): string {
+    if (decision.intent === 'greeting') {
+      return 'Bonjour ! Comment puis-je vous aider aujourd\'hui ?';
+    }
+    if (decision.intent === 'unknown') {
+      return "Je ne suis pas certain de bien comprendre votre demande. Pouvez-vous préciser s'il s'agit d'un sujet personnel ou professionnel ?";
+    }
+    return "D'accord.";
+  }
+}
