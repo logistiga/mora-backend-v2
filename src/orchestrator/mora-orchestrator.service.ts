@@ -58,7 +58,7 @@ export class MoraOrchestratorService {
       input.conversationId,
     );
 
-    const decision = await this.routerService.classify(input.message);
+    const decision = await this.routerService.classify(input.message, input.user.id);
 
     // Saved BEFORE dispatch: ContextBuilderService/getScopedHistory reads
     // this same row back as the last turn of history for the agent call.

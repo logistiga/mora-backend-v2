@@ -50,7 +50,11 @@ export class MemoryRetrievalService {
     const start = Date.now();
     const limit = params.limit ?? this.defaultLimit;
 
-    const embeddingOutcome = await this.embeddingService.embed(params.queryText);
+    const embeddingOutcome = await this.embeddingService.embed(params.queryText, {
+      userId: params.userId,
+      scope: params.scope,
+      space: params.space,
+    });
 
     if (embeddingOutcome.enabled && embeddingOutcome.embedding && embeddingOutcome.dimensions) {
       const candidates = await this.embeddingRepository.searchSimilar({

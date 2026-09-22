@@ -1,7 +1,7 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase C (intelligent memory, on top of Phase A auth
-and Phase B router/agents/orchestrator).**
+**Backend phase covered by this document: Phase C.5 (AI Provider Manager, on top of Phase A
+auth, Phase B router/agents/orchestrator, and Phase C intelligent memory).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
 building Mora's frontend without re-reading the backend source. Everything here describes
 what the backend **actually does today** — nothing aspirational.
@@ -189,21 +189,25 @@ exposes audit entries yet** — this is server-side only in Phase B.
 ## 10. LLM / embedding configuration & its effect on the UI
 
 **Backend provides:** neither `LlmService` nor `EmbeddingService` ever crashes the app if
-unconfigured. With no LLM (`OPENAI_API_KEY` unset), `personal`/`professional` responses come
-back with a fixed placeholder: *"Configuration LLM manquante : aucun provider n'est configuré
-(OPENAI_API_KEY absent). Cette réponse est un espace réservé — configurez un provider pour
-obtenir une vraie réponse."* With no embedding provider (`MORA_EMBEDDING_ENABLED=false` or no
-`MORA_EMBEDDING_API_KEY`), memories are still created and fully usable — they simply never get
-a vector, and retrieval silently uses real Postgres text search instead of semantic search.
-`direct` and `hybrid`-blocked responses are unaffected by either (they never call an LLM).
+unconfigured. As of Phase C.5, each first tries the calling user's own **AI Provider** (§12) —
+a DB-stored, per-user chat/embedding provider — before falling back to the legacy env variables
+(`OPENAI_API_KEY`, `MORA_EMBEDDING_*`), which still work exactly as before for backward
+compatibility (see §12's "env fallback" note). With genuinely nothing configured either way,
+`personal`/`professional` responses come back with a fixed placeholder: *"Configuration LLM
+manquante : aucun provider n'est configuré (OPENAI_API_KEY absent, et aucun AiProvider chat
+actif en base). Cette réponse est un espace réservé — configurez un provider pour obtenir une
+vraie réponse."* With no embedding provider (DB or env), memories are still created and fully
+usable — they simply never get a vector, and retrieval silently uses real Postgres text search
+instead of semantic search. `direct` and `hybrid`-blocked responses are unaffected by either
+(they never call an LLM).
 
 **Frontend should:** render the LLM placeholder exactly like a normal assistant message — no
-special handling required. There is no dedicated "is LLM/embedding configured" field anywhere
-in the API; infer it from behavior if a debug view needs it (see `API_CONTRACT.md`'s "LLM /
-embedding configuration" section for the exact signals).
+special handling required. There is no dedicated "is LLM/embedding configured" field on
+`POST /messages` itself; use `GET /ai-providers/status` (§12) for a proper configured/not-
+configured signal instead of inferring it from response text.
 
-**Not available yet:** no endpoint to check/set LLM or embedding configuration directly; no
-provider selection UI (one provider each, OpenAI-compatible, env-configured only).
+**Not available yet:** provider selection UI beyond what §12 describes; automatic per-
+complexity/route model switching (the selection rule is intentionally simple today — see §12).
 
 ---
 
@@ -291,7 +295,84 @@ fully functional; there is nothing to build differently for either case.
 
 ---
 
-## 12. Screens the frontend can already build with Phase A+B+C
+## 12. Phase C.5 — AI Providers & API Keys UX
+
+The backend now supports a "Paramètres → IA & API" settings page: multiple AI providers, each
+scoped to a usage kind (chat, embedding, and — reserved for later — vision/stt/tts/image/
+avatar), with encrypted keys and a real test-connection call.
+
+### What the backend actually does
+- A provider is a row the user creates: a display `name`, a `provider` string (openai,
+  anthropic, groq, deepseek, gemini, mistral, openrouter, ollama,
+  custom_openai_compatible, or any other string — not a closed list), a `kind` (chat/
+  embedding/vision/stt/tts/image/avatar — also open-ended), a `model`, an optional `baseUrl`
+  (for self-hosted / OpenAI-compatible endpoints), and an optional `apiKey`.
+- **The API key is never stored in plaintext** (AES-256-GCM, a server-only master key) and
+  **never comes back from any endpoint** — not on create, not on read. What you get instead:
+  `hasKey: true/false` and `keyHint` (the key's last 4 characters only, e.g. `"7890"`), enough
+  to let a user recognize which key is which without ever seeing the whole thing.
+- A provider can be scoped (`scope`/`space`, same values as elsewhere: `personal` |
+  `professional` + `general`/`logistiga`/`piston`/`code`) or left global (`null`/`null`) to
+  apply everywhere for its kind. Selection prefers an exact scope+space match, then scope-only,
+  then global; within a tie, the one marked `isDefault`, then higher `priority` wins. Exactly
+  one provider can be `isDefault` per (kind, scope, space) — the backend enforces this, setting
+  a new default automatically un-defaults the previous one.
+- `POST /ai-providers/:id/test` makes one real, minimal call through the actual adapter (not a
+  fake ping) — a 1-token chat completion, or an embedding of the word "test" — and records
+  `lastTestedAt`/`lastTestStatus`/`lastTestMessage`. The stored message is never the raw
+  provider error verbatim beyond ~200 characters, and never includes the key.
+- Disabling (`isActive: false`) is the reversible way to stop a provider from being selected;
+  `DELETE` is a real hard delete (no "trash"/undo) — see `API_CONTRACT.md` for why that's safe
+  here (historical `llm_calls` rows survive it).
+
+### Frontend should build
+- **Provider list**: grouped by `kind` (tabs or sections: Chat, Embedding, ...), each row
+  showing `name`, `provider`, `model`, a scope/space badge (or "Global" if both null), an
+  active/inactive toggle, a "Default" indicator, and `keyHint` (e.g. "Clé : ••••7890").
+- **Create/edit form**: name, provider (free-text or a dropdown of the known values with a
+  "custom" option), kind, model, base URL (optional), API key (optional — a password-style
+  input, write-only: never pre-filled on edit, only ever sent when the user wants to rotate it),
+  scope/space (optional selects), capabilities (advanced/collapsed JSON editor is fine for now).
+- **Test button**: calls `POST /:id/test`, shows a spinner, then success/failure with the
+  returned `message` and updates the row's last-tested indicator.
+- **Enable/disable toggle**: `POST /:id/enable` or `/:id/disable`.
+- **"Set as default" action**: `POST /:id/set-default` — after it succeeds, refresh the list
+  (another provider of the same kind/scope/space may have just lost its default status).
+- **Delete**: `DELETE /:id` — since this is a real hard delete, a confirmation dialog is
+  warranted (unlike Memory's archive, which is reversible).
+- **Status/overview widget** (e.g. at the top of the "IA & API" page, or in a general Settings
+  overview): `GET /ai-providers/status` → render each kind's configured/not state and its
+  current default (name/provider/model) — good for an at-a-glance "Chat: ✅ OpenAI (gpt-4o-mini)
+  · Embedding: ❌ not configured" summary.
+
+### Loading / empty / error states
+- **Loading**: standard list/form skeletons; the test-connection button should show its own
+  inline spinner (it makes a real network call to the provider and can take a few seconds).
+- **Empty**: a new user has zero providers — the whole app still works (Direct routing, and
+  graceful "not configured" replies elsewhere), so this is a normal state, not an error. Show a
+  prompt to add a first provider, not a blocking error.
+- **Error**: `400` (validation — e.g. invalid `baseUrl`, empty `model`), `401` (session
+  expired), `403`/`404` (not this user's provider, or unknown id). A failed `/test` call is
+  **not** an HTTP error — it's a `200`/`201` with `{ success: false, message }`; render that
+  inline on the row, not as a toast/exception.
+
+### Security — what the frontend must never do
+- Never render a full API key anywhere, even one the user just typed — treat the input as
+  write-only and clear it after a successful submit.
+- Never log a request/response containing an `apiKey` field to the browser console in a way
+  that could be screen-shared/recorded; the field only ever travels once, client → server, over
+  HTTPS in production.
+- There is no "reveal key" feature to build — it does not exist server-side (the backend itself
+  cannot produce the plaintext key outside of decrypting it in-memory for one outbound call).
+
+### Real JSON shapes and types
+See `API_CONTRACT.md`'s "AI Providers" section for every endpoint with full request/response
+examples, and `TYPES.md` for the `AiProvider`, `AiProviderStatus`, and `TestProviderResult`
+TypeScript shapes.
+
+---
+
+## 13. Screens the frontend can already build with Phase A+B+C+C.5
 
 - **Login** / **Register** screens (Phase A auth).
 - **Main Chat screen**: send a message, see Mora's reply, with a route/space badge.
@@ -306,14 +387,18 @@ fully functional; there is nothing to build differently for either case.
 - **Profile facts view** (read-only) (§11).
 - **Entities view** (read-only) (§11).
 - **Conversation summary indicator** in the chat screen (§11).
+- **"IA & API" settings page**: provider list, create/edit, test, enable/disable, set default,
+  delete, status overview (§12).
 
-## 13. Explicitly NOT available yet (do not build UI for these)
+## 14. Explicitly NOT available yet (do not build UI for these)
 
 Documents/RAG over files, tools/actions the assistant can execute, WhatsApp, email, calendar
 integration, LogistiGA/Piston external APIs, voice, speech recognition, vision, 3D avatar,
-n8n, conversation titles/rename/delete, pagination, LLM/embedding provider selection UI,
-per-space permissions, a working cross-scope toggle, password reset, audit log UI, a memory
-delete button, a manual "supersede" action, POST/PATCH for profile-facts or entities.
+n8n, conversation titles/rename/delete, pagination, per-space permissions, a working
+cross-scope toggle, password reset, audit log UI, a memory delete button, a manual "supersede"
+action, POST/PATCH for profile-facts or entities, a "reveal API key" feature (doesn't exist
+server-side), vision/STT/TTS/image/avatar provider testing (adapters not built yet — see
+`API_CONTRACT.md`), real per-complexity/route model switching.
 
 ---
 
@@ -321,7 +406,7 @@ delete button, a manual "supersede" action, POST/PATCH for profile-facts or enti
 
 `FRONTEND_HANDOFF.md`, `API_CONTRACT.md`, and `TYPES.md` are **living documents** — update
 all three at the end of every remaining phase (D, E, F, G, H) to reflect the real, shipped
-backend state, the same way this document was updated for Phase C (on top of what Phase B
+backend state, the same way this document was updated for Phase C.5 (on top of what Phase C
 wrote). Never let them describe a feature that isn't actually implemented yet.
 
 At **Phase H**, these three documents (accumulated across all phases) will be used to

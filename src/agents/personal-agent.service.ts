@@ -26,7 +26,10 @@ export class PersonalAgentService {
       latestUserMessage: input.message,
     });
 
-    const response = await this.llmService.complete({ messages: context.messages });
+    const response = await this.llmService.complete(
+      { messages: context.messages },
+      { userId: input.user.id, scope: 'personal', space: input.routerDecision.space, route: 'personal' },
+    );
 
     return {
       content: response.content,

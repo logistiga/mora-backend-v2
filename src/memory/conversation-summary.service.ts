@@ -70,33 +70,32 @@ export class ConversationSummaryService {
       return existing;
     }
 
-    if (!this.llmService.isConfigured()) {
-      this.logger.debug('Skipping conversation summary: no LLM provider configured');
-      return existing;
-    }
-
     const transcript = newMessages
       .map((m) => `${m.role === MessageRole.USER ? 'Utilisateur' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
-    const response = await this.llmService.complete({
-      messages: [
-        {
-          role: 'system',
-          content: existing
-            ? 'Tu mets à jour un résumé de conversation existant avec de nouveaux messages. ' +
-              'Réponds uniquement avec le résumé mis à jour (français, condensé, factuel, sans ' +
-              'préambule).'
-            : 'Tu résumes une conversation (français, condensé, factuel, sans préambule).',
-        },
-        ...(existing ? [{ role: 'system' as const, content: `Résumé actuel: ${existing.summary}` }] : []),
-        { role: 'user', content: transcript },
-      ],
-      temperature: 0.2,
-      maxTokens: 400,
-    });
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content: existing
+              ? 'Tu mets à jour un résumé de conversation existant avec de nouveaux messages. ' +
+                'Réponds uniquement avec le résumé mis à jour (français, condensé, factuel, sans ' +
+                'préambule).'
+              : 'Tu résumes une conversation (français, condensé, factuel, sans préambule).',
+          },
+          ...(existing ? [{ role: 'system' as const, content: `Résumé actuel: ${existing.summary}` }] : []),
+          { role: 'user', content: transcript },
+        ],
+        temperature: 0.2,
+        maxTokens: 400,
+      },
+      { userId, scope, space, route: 'conversation-summary' },
+    );
 
     if (!response.configured) {
+      this.logger.debug('Skipping conversation summary: no LLM provider configured (env or DB)');
       return existing;
     }
 

@@ -42,28 +42,32 @@ export class MemoryExtractionService {
     return wordCount >= MIN_WORD_COUNT;
   }
 
-  async proposeCandidates(userMessage: string, assistantResponse: string): Promise<MemoryCandidate[]> {
+  async proposeCandidates(
+    userMessage: string,
+    assistantResponse: string,
+    context: { userId: string; scope?: string; space?: string },
+  ): Promise<MemoryCandidate[]> {
     if (!this.isWorthConsidering(userMessage)) {
       return [];
     }
-    if (!this.llmService.isConfigured()) {
-      // No LLM → no extraction. Documented limitation, never blocks the app.
-      return [];
-    }
 
-    const response = await this.llmService.complete({
-      messages: [
-        { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Utilisateur: ${userMessage}\nAssistant: ${assistantResponse}`,
-        },
-      ],
-      temperature: 0,
-      maxTokens: 400,
-    });
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Utilisateur: ${userMessage}\nAssistant: ${assistantResponse}`,
+          },
+        ],
+        temperature: 0,
+        maxTokens: 400,
+      },
+      { userId: context.userId, scope: context.scope, space: context.space, route: 'memory-extraction' },
+    );
 
     if (!response.configured) {
+      // No LLM (env or DB) → no extraction. Documented limitation, never blocks the app.
       return [];
     }
 

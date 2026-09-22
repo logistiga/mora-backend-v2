@@ -147,6 +147,14 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsInt()
   MORA_SUMMARY_MESSAGE_THRESHOLD?: number;
+
+  // Optional: master key for AiProvider secret encryption (Phase C.5). Absent
+  // by design in most environments until the operator adds a real AI
+  // provider — SecretEncryptionService rejects encrypt/decrypt calls with a
+  // clear error when it's missing, but the app itself still boots fine.
+  @IsOptional()
+  @IsString()
+  MORA_ENCRYPTION_KEY?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

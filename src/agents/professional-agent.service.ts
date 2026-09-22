@@ -34,7 +34,10 @@ export class ProfessionalAgentService {
       latestUserMessage: input.message,
     });
 
-    const response = await this.llmService.complete({ messages: context.messages });
+    const response = await this.llmService.complete(
+      { messages: context.messages },
+      { userId: input.user.id, scope: 'professional', space: input.routerDecision.space, route: 'professional' },
+    );
 
     return {
       content: response.content,

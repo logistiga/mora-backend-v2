@@ -2,7 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryExtractionService } from './memory-extraction.service.js';
 
 function buildService() {
-  const llmServiceMock = { isConfigured: vi.fn(() => false), complete: vi.fn() };
+  const llmServiceMock = {
+    isConfigured: vi.fn(() => false),
+    complete: vi.fn(
+      async (): Promise<{ configured: boolean; content: string; provider: string; model: string | null }> => ({
+        configured: false,
+        content: '',
+        provider: 'none',
+        model: null,
+      }),
+    ),
+  };
   const memoryServiceMock = {
     findSupersessionCandidate: vi.fn(async (): Promise<{ id: string } | null> => null),
     create: vi.fn(async () => ({ id: 'created-1' })),
@@ -51,23 +61,21 @@ describe('MemoryExtractionService', () => {
 
   describe('proposeCandidates', () => {
     it('never calls the LLM for trivial input', async () => {
-      ctx.llmServiceMock.isConfigured.mockReturnValue(true);
-      const result = await ctx.service.proposeCandidates('Merci', 'De rien');
+      const result = await ctx.service.proposeCandidates('Merci', 'De rien', { userId: 'u1' });
       expect(result).toEqual([]);
       expect(ctx.llmServiceMock.complete).not.toHaveBeenCalled();
     });
 
     it('returns no candidates when no LLM is configured, without throwing', async () => {
-      ctx.llmServiceMock.isConfigured.mockReturnValue(false);
       const result = await ctx.service.proposeCandidates(
         'Je préfère recevoir mes rappels de façon courte et directe',
         'Compris, je serai bref.',
+        { userId: 'u1' },
       );
       expect(result).toEqual([]);
     });
 
     it('parses valid JSON candidates from a configured LLM', async () => {
-      ctx.llmServiceMock.isConfigured.mockReturnValue(true);
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
         content: JSON.stringify([
@@ -80,14 +88,18 @@ describe('MemoryExtractionService', () => {
       const result = await ctx.service.proposeCandidates(
         'Je préfère recevoir mes rappels de façon courte et directe',
         'Compris.',
+        { userId: 'u1', scope: 'personal', space: 'personal' },
       );
 
+      expect(ctx.llmServiceMock.complete).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ userId: 'u1', scope: 'personal', space: 'personal' }),
+      );
       expect(result).toHaveLength(1);
       expect(result[0].kind).toBe('preference');
     });
 
     it('returns no candidates when the LLM output is not valid JSON', async () => {
-      ctx.llmServiceMock.isConfigured.mockReturnValue(true);
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
         content: 'not json at all',
@@ -98,13 +110,13 @@ describe('MemoryExtractionService', () => {
       const result = await ctx.service.proposeCandidates(
         'Je préfère recevoir mes rappels de façon courte et directe',
         'Compris.',
+        { userId: 'u1' },
       );
 
       expect(result).toEqual([]);
     });
 
     it('drops malformed candidate entries but keeps valid ones', async () => {
-      ctx.llmServiceMock.isConfigured.mockReturnValue(true);
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
         content: JSON.stringify([
@@ -118,6 +130,7 @@ describe('MemoryExtractionService', () => {
       const result = await ctx.service.proposeCandidates(
         'Voici une information durable sur le client',
         'Compris.',
+        { userId: 'u1' },
       );
 
       expect(result).toHaveLength(1);

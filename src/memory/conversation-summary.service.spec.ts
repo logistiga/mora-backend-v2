@@ -6,7 +6,17 @@ function buildService(threshold = 5) {
     conversationSummary: { findUnique: vi.fn(), upsert: vi.fn() },
     message: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
   };
-  const llmServiceMock = { isConfigured: vi.fn(() => false), complete: vi.fn() };
+  const llmServiceMock = {
+    isConfigured: vi.fn(() => false),
+    complete: vi.fn(
+      async (): Promise<{ configured: boolean; content: string; provider: string; model: string | null }> => ({
+        configured: false,
+        content: '',
+        provider: 'none',
+        model: null,
+      }),
+    ),
+  };
   const configServiceMock = { get: vi.fn(() => threshold) };
 
   const service = new ConversationSummaryService(
@@ -60,12 +70,13 @@ describe('ConversationSummaryService', () => {
       ctx.prismaMock.message.findMany.mockResolvedValue([
         { id: 'm1', role: 'USER', content: 'bonjour', createdAt: new Date() },
       ]);
-      ctx.llmServiceMock.isConfigured.mockReturnValue(false);
+      // complete() is attempted (Phase C.5: availability may depend on this
+      // user's own DB providers) but reports back "not configured".
 
       const result = await ctx.service.summarize('conv1', 'u1', 'personal', 'personal');
 
       expect(result).toBe(existing);
-      expect(ctx.llmServiceMock.complete).not.toHaveBeenCalled();
+      expect(ctx.llmServiceMock.complete).toHaveBeenCalledOnce();
     });
 
     it('creates a new summary from scratch when none exists and an LLM is configured', async () => {
@@ -74,7 +85,6 @@ describe('ConversationSummaryService', () => {
         { id: 'm1', role: 'USER', content: 'Je préfère les rappels courts', createdAt: new Date() },
         { id: 'm2', role: 'ASSISTANT', content: 'Compris.', createdAt: new Date() },
       ]);
-      ctx.llmServiceMock.isConfigured.mockReturnValue(true);
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
         content: "L'utilisateur préfère des rappels courts.",

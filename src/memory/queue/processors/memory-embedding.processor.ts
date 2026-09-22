@@ -21,18 +21,25 @@ export class MemoryEmbeddingProcessor extends WorkerHost {
   async process(job: Job<MemoryEmbeddingJobData>): Promise<{ embedded: boolean; reason?: string }> {
     const { memoryId, userId } = job.data;
 
-    if (!this.embeddingService.isEnabled()) {
-      this.logger.debug(`Skipping embedding for memory ${memoryId}: no embedding provider configured`);
-      return { embedded: false, reason: 'not_configured' };
-    }
-
     const memory = await this.prisma.memory.findUnique({ where: { id: memoryId } });
     if (!memory || memory.userId !== userId) {
       this.logger.warn(`Embedding job for missing/foreign memory ${memoryId}, skipping`);
       return { embedded: false, reason: 'memory_not_found' };
     }
 
-    const outcome = await this.embeddingService.embed(memory.content);
+    // No isEnabled() pre-check: whether embeddings are available may depend
+    // on this user's own DB AiProvider rows (Phase C.5), not only the env
+    // fallback — embed() itself reports back `enabled: false` when neither
+    // is configured, which is handled identically below.
+    const outcome = await this.embeddingService.embed(memory.content, {
+      userId,
+      scope: memory.scope,
+      space: memory.space,
+    });
+    if (!outcome.enabled) {
+      this.logger.debug(`Skipping embedding for memory ${memoryId}: no embedding provider configured`);
+      return { embedded: false, reason: 'not_configured' };
+    }
     if (!outcome.embedding || !outcome.dimensions || !outcome.model) {
       this.logger.warn(`Embedding provider failed for memory ${memoryId}: ${outcome.error ?? 'unknown error'}`);
       return { embedded: false, reason: outcome.error ?? 'provider_error' };
