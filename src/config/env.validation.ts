@@ -155,6 +155,14 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   MORA_ENCRYPTION_KEY?: string;
+
+  // Optional: IANA timezone used to phrase the "current time" reference the
+  // LLM is given for resolving relative date expressions (Phase D — see
+  // TimeContextService). Defaults to 'UTC' when absent; documented,
+  // explicit, never a silent per-request guess.
+  @IsOptional()
+  @IsString()
+  MORA_DEFAULT_TIMEZONE?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

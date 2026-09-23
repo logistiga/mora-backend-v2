@@ -20,6 +20,8 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
   const configService = {
     get: vi.fn(() => overrides.crossScopeEnabled ?? false),
   };
+  const toolExecutor = { requestExecution: vi.fn() };
+  const llmService = { complete: vi.fn(async () => ({ configured: false, content: '', provider: 'none', model: null })) };
 
   const service = new MoraOrchestratorService(
     routerService as never,
@@ -30,6 +32,8 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
     auditService as never,
     memoryQueue as never,
     conversationSummaryService as never,
+    toolExecutor as never,
+    llmService as never,
     configService as never,
   );
 
@@ -43,6 +47,8 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
     auditService,
     memoryQueue,
     conversationSummaryService,
+    toolExecutor,
+    llmService,
   };
 }
 
@@ -228,5 +234,111 @@ describe('MoraOrchestratorService', () => {
     await flushMicrotasks();
 
     expect(ctx.memoryQueue.enqueueExtraction).not.toHaveBeenCalled();
+  });
+
+  describe('tool-calling confirmation contract (post-review correction)', () => {
+    const personalDecision = {
+      route: 'personal',
+      scope: 'personal',
+      space: 'personal',
+      intent: 'task',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.85,
+      method: 'rules',
+    };
+
+    it('never fabricates an `action` when the agent returned no real toolCalls, even if the text mimics a confirmation', async () => {
+      ctx.routerService.classify.mockResolvedValue(personalDecision);
+      ctx.personalAgent.handle.mockResolvedValue({
+        content: 'Créer une tâche : "X". Veux-tu confirmer ?', // LLM narrating without a real tool call
+        metadata: {},
+        // toolCalls intentionally absent — this is the exact case under review
+      });
+
+      const result = await ctx.service.handleMessage({ user, message: 'Ajoute une tâche X' });
+
+      expect(result.action).toBeUndefined();
+      expect(ctx.toolExecutor.requestExecution).not.toHaveBeenCalled();
+    });
+
+    it('`action` only ever comes from a real ToolExecutor pending_confirmation outcome, never from agent text', async () => {
+      ctx.routerService.classify.mockResolvedValue(personalDecision);
+      ctx.personalAgent.handle.mockResolvedValue({
+        content: 'ignored — the backend template replaces this',
+        metadata: {},
+        toolCalls: [{ name: 'create_task', arguments: { title: 'X' }, providerCallId: 'call_1' }],
+      });
+      ctx.toolExecutor.requestExecution.mockResolvedValue({
+        kind: 'pending_confirmation',
+        pendingActionId: 'pa-1',
+        summary: 'Créer une tâche : "X"',
+        securityLevel: 'N2',
+      });
+
+      const result = await ctx.service.handleMessage({ user, message: 'Ajoute une tâche X' });
+
+      expect(ctx.toolExecutor.requestExecution).toHaveBeenCalledWith(
+        'create_task',
+        { title: 'X' },
+        expect.objectContaining({ scope: 'personal', space: 'personal' }),
+      );
+      expect(result.action).toEqual({
+        type: 'confirmation_required',
+        pendingActionId: 'pa-1',
+        tool: 'create_task',
+        securityLevel: 'N2',
+        summary: 'Créer une tâche : "X"',
+      });
+    });
+
+    it('a second real tool call in the SAME conversation produces a distinct pending_action, never a stale/reused one', async () => {
+      ctx.routerService.classify.mockResolvedValue(personalDecision);
+      ctx.toolExecutor.requestExecution
+        .mockResolvedValueOnce({
+          kind: 'pending_confirmation',
+          pendingActionId: 'pa-1',
+          summary: 'Créer une tâche : "Appeler Jean"',
+          securityLevel: 'N2',
+        })
+        .mockResolvedValueOnce({
+          kind: 'pending_confirmation',
+          pendingActionId: 'pa-2',
+          summary: 'Créer une tâche : "Préparer le dossier"',
+          securityLevel: 'N2',
+        });
+
+      ctx.personalAgent.handle.mockResolvedValueOnce({
+        content: '',
+        metadata: {},
+        toolCalls: [{ name: 'create_task', arguments: { title: 'Appeler Jean' }, providerCallId: 'call_1' }],
+      });
+      const first = await ctx.service.handleMessage({ user, conversationId: 'conv-1', message: 'Ajoute une tâche appeler Jean' });
+
+      ctx.personalAgent.handle.mockResolvedValueOnce({
+        content: '',
+        metadata: {},
+        toolCalls: [{ name: 'create_task', arguments: { title: 'Préparer le dossier' }, providerCallId: 'call_2' }],
+      });
+      const second = await ctx.service.handleMessage({ user, conversationId: 'conv-1', message: 'Ajoute aussi une tâche préparer le dossier' });
+
+      expect(first.action?.pendingActionId).toBe('pa-1');
+      expect(second.action?.pendingActionId).toBe('pa-2');
+      expect(first.action?.pendingActionId).not.toBe(second.action?.pendingActionId);
+      expect(ctx.toolExecutor.requestExecution).toHaveBeenCalledTimes(2);
+    });
+
+    it('a rejected/unknown tool call never produces an `action` field', async () => {
+      ctx.routerService.classify.mockResolvedValue(personalDecision);
+      ctx.personalAgent.handle.mockResolvedValue({
+        content: '',
+        metadata: {},
+        toolCalls: [{ name: 'delete_everything', arguments: {}, providerCallId: 'call_1' }],
+      });
+      ctx.toolExecutor.requestExecution.mockResolvedValue({ kind: 'rejected', reason: 'unknown_tool' });
+
+      const result = await ctx.service.handleMessage({ user, message: 'fais un truc dangereux' });
+      expect(result.action).toBeUndefined();
+    });
   });
 });

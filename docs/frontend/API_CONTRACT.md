@@ -1,4 +1,4 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
@@ -119,6 +119,32 @@ per failed field).
   `space`: `"direct" | "personal" | "general" | "logistiga" | "piston" | "code" | "hybrid"`.
   `messageId` identifies Mora's reply (the assistant message just created), not the user's
   message.
+- **Phase D — optional `action` field**: present **only** when the LLM proposed a tool call
+  that needs confirmation (security level N2/N3 — see [Tools & Actions](#tools--actions-phase-d)
+  below). Absent for every response shape that existed before Phase D, so this is fully
+  backward-compatible with Phase B/C frontends that never look for it.
+  ```json
+  {
+    "conversationId": "uuid",
+    "messageId": "uuid",
+    "response": "Créer un rappel : \"Appeler Jean\" (2026-09-24T09:00:00Z). Veux-tu confirmer ?",
+    "route": "personal",
+    "scope": "personal",
+    "space": "personal",
+    "confidence": 0.85,
+    "action": {
+      "type": "confirmation_required",
+      "pendingActionId": "uuid",
+      "tool": "create_reminder",
+      "securityLevel": "N2",
+      "summary": "Créer un rappel : \"Appeler Jean\" (2026-09-24T09:00:00Z)"
+    }
+  }
+  ```
+  When `action` is present, **nothing has been executed yet** — the frontend should render a
+  confirm/cancel card and call `POST /pending-actions/:id/approve` or `/reject` (see below).
+  When `action` is absent, the response is final (either a plain reply, or an N1 tool — e.g.
+  `list_tasks` — already executed automatically and summarized in `response`).
 - **Errors**: `400` (validation — empty/too-long message, malformed `conversationId`),
   `401` (no/invalid access token), `403` (`conversationId` belongs to another user), `404`
   (`conversationId` does not exist).
@@ -528,10 +554,91 @@ request/response shape changed.
 
 ---
 
+## Tools & Actions (Phase D)
+
+Mora can now **act** (tasks, reminders), not just converse/remember — but always under backend
+control. See `docs/frontend/FRONTEND_HANDOFF.md` for the full conversational UX this is meant to
+support (confirmation cards, etc).
+
+**Security levels** (`securityLevel` on a tool/pending action):
+- `N1` (auto) — read-only or low-risk (e.g. `list_tasks`, `search_memories`): executes
+  immediately, no confirmation, result already reflected in `/messages`' `response` text.
+- `N2` (confirmation) — modifies state but reversible (e.g. `create_task`, `create_reminder`,
+  `complete_task`, `cancel_reminder`): **always** requires `POST /pending-actions/:id/approve`.
+- `N3` (sensitive) — reserved for future external actions (Phase E). No N3 tool ships in
+  Phase D; same confirmation requirement as N2 when one exists.
+- `N4` (critical) — reserved, never auto-executed, never approvable. No N4 tool ships in
+  Phase D.
+
+**Important distinction**: a direct REST call below (`POST /tasks`, `POST /reminders`, ...) made
+by an authenticated user **is itself the explicit confirmation** and executes immediately, even
+for an N2-level action — the REST call *is* the user's intent. Only a tool call **proposed by
+the LLM** from `POST /messages` goes through the `pending_action` confirmation flow.
+
+### `GET /api/v1/tools`
+- **Auth**: Bearer token.
+- **Success — 200**: public metadata only — never internal code or secrets.
+  ```json
+  [
+    { "name": "create_task", "description": "...", "securityLevel": "N2", "requiresConfirmation": true, "allowedScopes": ["personal", "professional"] },
+    { "name": "list_tasks", "description": "...", "securityLevel": "N1", "requiresConfirmation": false, "allowedScopes": ["personal", "professional"] }
+  ]
+  ```
+
+### Tasks
+- `GET /api/v1/tasks?scope=&space=&status=` — list, scoped to the caller.
+- `GET /api/v1/tasks/:id` — one task (`403` if it belongs to another user).
+- `POST /api/v1/tasks` — body: `{ scope: "personal"|"professional", space: string, title: string, description?, priority?: "low"|"normal"|"high"|"urgent", dueAt?: ISO8601 }`. Executes immediately (REST = explicit confirmation).
+- `PATCH /api/v1/tasks/:id` — body: any subset of `{ title, description, status: "pending"|"in_progress"|"completed"|"cancelled", priority, dueAt }`.
+- `POST /api/v1/tasks/:id/complete` — shortcut for `status: "completed"`.
+- `POST /api/v1/tasks/:id/cancel`.
+- **Task shape**:
+  ```json
+  {
+    "id": "uuid", "userId": "uuid", "scope": "personal", "space": "personal",
+    "title": "Appeler Jean", "description": null, "status": "pending", "priority": "normal",
+    "dueAt": null, "completedAt": null, "source": "manual",
+    "sourceConversationId": null, "createdAt": "...", "updatedAt": "..."
+  }
+  ```
+  `source`: `"manual"` (REST) or `"tool"` (created via an approved LLM tool call).
+
+### Reminders
+- `GET /api/v1/reminders?scope=&space=&status=` — list.
+- `GET /api/v1/reminders/:id`.
+- `POST /api/v1/reminders` — body: `{ scope, space, title, message?, remindAt: ISO8601 }`. Schedules a real BullMQ delayed job.
+- `POST /api/v1/reminders/:id/cancel` — idempotent no-op if already delivered/cancelled.
+- **Reminder shape**: `status: "scheduled"|"delivered"|"cancelled"|"failed"`, plus `deliveredAt`/`cancelledAt` timestamps.
+- **Delivery**: Phase D delivers a due reminder as exactly one internal `Notification` (`type: "reminder"`) — no email/WhatsApp/push yet (Phase E).
+
+### Pending Actions (the confirmation flow)
+- `GET /api/v1/pending-actions` — the caller's own pending actions, newest first.
+- `GET /api/v1/pending-actions/:id`.
+- `POST /api/v1/pending-actions/:id/approve` — executes the underlying tool.
+  ```json
+  { "status": "executed", "pendingAction": { "...": "...", "result": { "id": "uuid", "title": "..." } }, "toolResultOk": true }
+  ```
+  A second approve on the same id returns `{ "status": "already_processed", ... }` and never
+  executes twice (idempotent — see the Phase D final report for the concurrency proof).
+- `POST /api/v1/pending-actions/:id/reject` — never executes the tool; `{ "status": "rejected", ... }`.
+- A pending action **expires** 30 minutes after creation (`expiresAt`); approving an expired one
+  returns `{ "status": "expired", ... }` and executes nothing.
+- **Errors**: `403` if the pending action belongs to another user (never even visible via GET).
+
+### Notifications
+- `GET /api/v1/notifications?status=unread|read`.
+- `POST /api/v1/notifications/:id/read`.
+- `POST /api/v1/notifications/read-all`.
+- **Shape**: `{ id, userId, type, title, message, status: "unread"|"read", metadata, readAt, createdAt }`. `metadata.reminderId` links a `type: "reminder"` notification back to its reminder.
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase C.5) for: audit entries, conversation rename/delete/title,
+No endpoint exists (as of Phase D) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
-endpoint, documents/RAG, tools/actions, WhatsApp/email/calendar, voice, avatar, a "reveal API
-key" endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar provider testing
-(no adapters built yet, `POST /:id/test` returns `success: false` for those kinds today).
+endpoint, documents/RAG, WhatsApp/email/calendar/other external actions (Phase E), voice,
+avatar, a "reveal API key" endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar
+provider testing (no adapters built yet, `POST /:id/test` returns `success: false` for those
+kinds today), and no N3/N4 tool of any kind (the security levels exist and are enforced, but
+Phase D ships no concrete tool at those levels).

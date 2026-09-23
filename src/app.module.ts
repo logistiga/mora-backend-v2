@@ -20,9 +20,14 @@ import { LlmModule } from './llm/llm.module.js';
 import { MemoryModule } from './memory/memory.module.js';
 import { MemoryQueueModule } from './memory/queue/memory-queue.module.js';
 import { MessagesModule } from './messages/messages.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 import { OrchestratorModule } from './orchestrator/orchestrator.module.js';
+import { PendingActionsModule } from './pending-actions/pending-actions.module.js';
 import { QueueModule } from './queue/queue.module.js';
+import { RemindersModule } from './reminders/reminders.module.js';
 import { RouterModule } from './router/router.module.js';
+import { TasksModule } from './tasks/tasks.module.js';
+import { ToolsModule } from './tools/tools.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
@@ -72,6 +77,11 @@ import { UsersModule } from './users/users.module.js';
     ConversationsModule,
     MemoryModule,
     MemoryQueueModule,
+    TasksModule,
+    NotificationsModule,
+    RemindersModule,
+    ToolsModule,
+    PendingActionsModule,
     OrchestratorModule,
     MessagesModule,
   ],
