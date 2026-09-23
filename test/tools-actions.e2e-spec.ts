@@ -776,6 +776,44 @@ describe('Tools & Actions (e2e) — post-review corrections', () => {
 
     await testApp.close();
   });
+
+  it('5. a real N1 tool with an empty input schema (list_pending_actions) executes successfully with no arguments — never invalid_arguments', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(OpenAiCompatibleChatAdapter)
+      .useValue({
+        supportedProviders: ['openai'],
+        // Simulates a real provider proposing a no-argument tool call: the
+        // `arguments` field is genuinely absent from the function-call
+        // payload, exactly as case C from the correction report.
+        complete: async () => ({
+          content: '',
+          model: 'gpt-4o-mini',
+          toolCalls: [{ name: 'list_pending_actions', arguments: {}, providerCallId: 'call_empty' }],
+        }),
+        supportsTools: () => true,
+        supportsVision: () => false,
+        supportsJsonMode: () => false,
+      })
+      .compile();
+    const testApp = moduleRef.createNestApplication();
+    testApp.setGlobalPrefix('api/v1');
+    testApp.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    await testApp.init();
+
+    const res = await request(testApp.getHttpServer())
+      .post('/api/v1/messages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ message: 'Pour mon suivi personnel, ai-je des actions en attente ?' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.action).toBeUndefined(); // N1 — executed immediately, no confirmation needed
+
+    const testPrisma = testApp.get(PrismaService);
+    const call = await testPrisma.toolCall.findFirst({ where: { toolName: 'list_pending_actions' }, orderBy: { createdAt: 'desc' } });
+    expect(call?.status).toBe('success'); // never 'failed' with errorCode invalid_arguments
+
+    await testApp.close();
+  });
 });
 
 // 31. Phase A/B/C/C.5/C.6 regression smoke — Phase D must never break the

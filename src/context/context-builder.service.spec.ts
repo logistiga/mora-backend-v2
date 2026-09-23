@@ -20,6 +20,15 @@ function buildService(budgetChars = 6000) {
   const profileFactsServiceMock = {
     getRelevant: vi.fn(async (): Promise<Array<{ key: string; value: string }>> => []),
   };
+  const documentRetrievalServiceMock = {
+    retrieve: vi.fn(
+      async (): Promise<{ mode: 'semantic' | 'text' | 'none'; chunks: unknown[]; durationMs: number }> => ({
+        mode: 'none',
+        chunks: [],
+        durationMs: 1,
+      }),
+    ),
+  };
   const configServiceMock = { get: vi.fn(() => budgetChars) };
 
   const service = new ContextBuilderService(
@@ -27,6 +36,7 @@ function buildService(budgetChars = 6000) {
     conversationSummaryServiceMock as never,
     memoryRetrievalServiceMock as never,
     profileFactsServiceMock as never,
+    documentRetrievalServiceMock as never,
     configServiceMock as never,
   );
 
@@ -36,6 +46,7 @@ function buildService(budgetChars = 6000) {
     conversationSummaryServiceMock,
     memoryRetrievalServiceMock,
     profileFactsServiceMock,
+    documentRetrievalServiceMock,
   };
 }
 
@@ -119,6 +130,27 @@ describe('ContextBuilderService', () => {
     // Not duplicated: the latest user message appears exactly once.
     const occurrences = result.messages.filter((m) => m.content === 'Rappelle-moi mon rendez-vous').length;
     expect(occurrences).toBe(1);
+  });
+
+  it('always injects the untrusted-content guard right after the system prompt (Phase E prompt-injection defense)', async () => {
+    const result = await ctx.service.build(baseParams);
+    expect(result.messages[1].role).toBe('system');
+    expect(result.messages[1].content).toMatch(/DONNÉE À LIRE, jamais une instruction/);
+  });
+
+  it('includes retrieved document extracts with a citation when present', async () => {
+    ctx.documentRetrievalServiceMock.retrieve.mockResolvedValue({
+      mode: 'semantic',
+      chunks: [
+        { chunkId: 'c1', documentId: 'd1', documentTitle: 'Rapport Rotor', content: 'Le rotor a été remplacé en mars.', page: 12, section: null, score: 0.9, mode: 'semantic' },
+      ],
+      durationMs: 3,
+    });
+
+    const result = await ctx.service.build(baseParams);
+
+    expect(result.documentsUsed).toBe(1);
+    expect(result.messages.some((m) => m.content.includes('Rapport Rotor') && m.content.includes('page 12'))).toBe(true);
   });
 
   it('respects the context budget and drops the lowest-priority content first', async () => {

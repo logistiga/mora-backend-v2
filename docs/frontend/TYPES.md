@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D)
+# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -372,6 +372,201 @@ interface Notification {
   createdAt: string;
 }
 
+// ---- Documents & Document Intelligence (Phase E) ---------------------------
+
+type DocumentStatus = 'uploaded' | 'queued' | 'processing' | 'ready' | 'needs_review' | 'failed' | 'archived';
+
+interface Document {
+  id: string;
+  userId: string;
+  scope: 'personal' | 'professional';
+  space: string;
+  filename: string; // internal storage filename, not user-facing
+  originalFilename: string;
+  mimeType: string;
+  extension: string;
+  sizeBytes: number;
+  documentType: string | null; // AI-suggested, e.g. 'invoice' | 'contract' | 'report' | 'other'
+  title: string | null;
+  language: string | null;
+  source: 'upload' | 'whatsapp' | 'email';
+  sourceId: string | null;
+  storageProvider: string; // 'local' today
+  storageKey: string; // internal — never a browser-usable URL
+  status: DocumentStatus;
+  classificationConfidence: number | null; // 0..1
+  needsReview: boolean;
+  summary: string | null;
+  keyPoints: unknown | null;
+  checksum: string; // SHA-256, dedup key
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  processedAt: string | null;
+}
+
+interface DocumentTable {
+  id: string;
+  documentId: string;
+  sheetName: string | null;
+  tableIndex: number;
+  title: string | null;
+  columns: { name: string; type: string }[];
+  rowCount: number;
+  columnCount: number;
+  createdAt: string;
+}
+
+interface DocumentDetail {
+  document: Document;
+  tags: string[];
+  entities: Entity[]; // reuses the Phase C Entity type
+  tables: DocumentTable[];
+}
+
+interface DocumentChunkCitation {
+  chunkId: string;
+  documentId: string;
+  documentTitle: string;
+  content: string;
+  page: number | null;
+  section: string | null;
+  score: number;
+  mode: 'semantic' | 'text';
+}
+
+// ---- Contacts (Phase E) -----------------------------------------------------
+
+type TrustLevel = 'unknown' | 'known' | 'trusted' | 'vip' | 'restricted' | 'blocked';
+type ContactIdentityType = 'whatsapp' | 'email';
+
+interface ContactIdentity {
+  id: string;
+  contactId: string;
+  type: ContactIdentityType;
+  valueNormalized: string;
+  displayValue: string;
+  verified: boolean;
+  createdAt: string;
+}
+
+interface Contact {
+  id: string;
+  userId: string;
+  name: string;
+  firstName: string | null;
+  lastName: string | null;
+  company: string | null;
+  jobTitle: string | null;
+  scope: 'personal' | 'professional';
+  space: string;
+  relationship: string | null;
+  trustLevel: TrustLevel;
+  notes: string | null;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastInteractionAt: string | null;
+  identities?: ContactIdentity[]; // present on GET /contacts/:id only
+}
+
+// ---- Calendar (Phase E) ------------------------------------------------------
+
+type CalendarEventStatus = 'confirmed' | 'tentative' | 'cancelled';
+
+interface CalendarEvent {
+  id: string;
+  userId: string;
+  scope: 'personal' | 'professional';
+  space: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  startsAt: string;
+  endsAt: string;
+  timezone: string; // explicit, never implicit — see TimeContextService
+  status: CalendarEventStatus;
+  recurrenceRule: string | null;
+  source: 'mora' | 'google' | 'microsoft'; // only 'mora' is real in Phase E
+}
+
+interface FreeSlot {
+  startsAt: string;
+  endsAt: string;
+}
+
+// ---- WhatsApp (Phase E — Mora's own number) ----------------------------------
+
+interface WhatsAppAccount {
+  id: string;
+  label: string;
+  phoneNumber: string;
+  provider: 'evolution' | 'meta_cloud';
+  status: 'configured' | 'connected' | 'disconnected' | 'error';
+  lastSyncAt: string | null;
+  lastError: string | null;
+  // NEVER present: apiKey, credentialsEncrypted, credentialsIv, credentialsAuthTag.
+}
+
+interface WhatsAppConversation {
+  id: string;
+  accountId: string;
+  contactId: string | null;
+  scope: string;
+  space: string;
+  lastMessageAt: string | null;
+}
+
+interface WhatsAppMessage {
+  id: string;
+  conversationId: string;
+  providerMessageId: string;
+  direction: 'inbound' | 'outbound';
+  contactId: string | null;
+  timestamp: string;
+  status: string | null;
+  text: string | null;
+}
+
+// ---- Email (Phase E — Mora's own mailbox(es)) --------------------------------
+
+interface EmailAccount {
+  id: string;
+  label: string;
+  address: string;
+  provider: 'imap_smtp' | 'gmail' | 'microsoft_graph';
+  status: 'configured' | 'connected' | 'disconnected' | 'error';
+  lastSyncAt: string | null;
+  lastError: string | null;
+  // NEVER present: password, credentialsEncrypted, credentialsIv, credentialsAuthTag.
+}
+
+interface EmailThread {
+  id: string;
+  accountId: string;
+  subject: string | null;
+  scope: string;
+  space: string;
+  contactId: string | null;
+  lastMessageAt: string | null;
+}
+
+interface EmailMessage {
+  id: string;
+  threadId: string;
+  providerMessageId: string;
+  from: string;
+  to: string[];
+  cc: string[];
+  subject: string | null;
+  textBody: string | null;
+  htmlBodySanitized: string | null; // ALWAYS sanitized — never raw provider HTML
+  direction: 'inbound' | 'outbound';
+  receivedAt: string | null;
+  sentAt: string | null;
+  contactId: string | null;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -399,4 +594,10 @@ interface ApiError {
   never infer it from `response` text (Mora's phrasing there is not a stable contract). Treat
   every REST mutation under `/tasks`, `/reminders` as immediate (no `pending_action` involved),
   and every `action` coming back from `/messages` as requiring an explicit
-  `POST /pending-actions/:id/approve` or `/reject` before anything happens.
+  `POST /pending-actions/:id/approve` or `/reject` before anything happens. The same rule
+  applies to every Phase E N2 tool (`create_contact`, `calendar_create_event`,
+  `whatsapp_send_message`, `email_send`, etc.).
+- Phase E: `Document.storageKey`/`storageProvider` are internal — never construct a download
+  URL from them client-side; there is no public file-serving endpoint yet (out of scope, see
+  "Endpoints NOT yet available"). `WhatsAppAccount`/`EmailAccount` never expose credentials on
+  the wire, the same discipline as `AiProvider`.

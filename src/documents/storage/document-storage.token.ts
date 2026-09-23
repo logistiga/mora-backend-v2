@@ -1,0 +1,1 @@
+export const DOCUMENT_STORAGE = Symbol('DOCUMENT_STORAGE');

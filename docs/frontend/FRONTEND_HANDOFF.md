@@ -1,6 +1,6 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase D (Tools/Actions/Permissions/Confirmations/
+**Backend phase covered by this document: Phase E (Tools/Actions/Permissions/Confirmations/
 Tasks/Reminders, on top of Phase A auth, Phase B router/agents/orchestrator, Phase C
 intelligent memory, and Phase C.5 AI Provider Manager).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
@@ -468,7 +468,93 @@ request/response examples, and `TYPES.md` for `Task`, `Reminder`, `PendingAction
 
 ---
 
-## 14. Screens the frontend can already build with Phase A+B+C+C.5+D
+## 14. Phase E — Connections & Document Intelligence UX
+
+Mora now has document knowledge, a contact book, and its own WhatsApp/email/calendar —
+all still governed by the exact same Tools/Permissions/confirmation model as Phase D.
+
+### Documents
+- **Upload screen**: drag-and-drop or file picker (PDF/DOCX/TXT/MD/CSV/XLSX only), a
+  scope/space selector, `POST /documents`. Show the returned `status` immediately
+  (`uploaded`/`queued`), then poll `GET /documents/:id/status` until it settles.
+- **Status badges**: `queued`/`processing` (spinner), `ready` (green), `needs_review` (amber —
+  low-confidence classification or no extractable text/OCR-needed), `failed` (red, with a
+  "Reprocess" button → `POST /documents/:id/reprocess`), `archived` (greyed out).
+- **Document list**: filters for scope/space/type/tag/source/needsReview; each row shows
+  title, type badge, a few tags, and the AI summary as a preview.
+- **Document detail**: metadata, summary, tags (AI + manual, editable via `PATCH`), linked
+  entities, and any extracted tables (render as a real table, with a "analyze" affordance
+  that could later call `query_document_table` conversationally).
+- **Search**: a search box in the chat or a dedicated documents search screen maps to asking
+  Mora directly (`search_document_content` is a conversational tool, not a REST search
+  endpoint in Phase E) — results carry a citation (`documentTitle` + `page`/`section`) to
+  render as *"Source : Rapport Rotor — page 12"*.
+- **Isolation**: exactly like Memory — a document uploaded to Personal never appears, is never
+  searched, and is never cited in a Professional conversation, and vice versa.
+
+### Contacts
+- **Contact list/detail**: name, company, trust-level badge (`unknown`/`known`/`trusted`/
+  `vip`/`restricted`/`blocked`), attached identities (email/WhatsApp icons).
+- **Add identity**: a small form (`type` + `value`) on the contact detail screen —
+  `POST /contacts/:id/identities`; a `409` means that number/email is already attached to a
+  different contact (surface as "already linked to X", not a generic error).
+- **Blocking a contact** (`trustLevel: "blocked"`) is a real, effective action: WhatsApp/Email
+  connectors stop engaging with that contact entirely (no storage, no draft, no reply).
+
+### WhatsApp (Mora's own number)
+- **Important framing for the UI**: this is *Mora's* WhatsApp, not the user's personal one —
+  label it clearly (e.g. "Mora WhatsApp" / the configured business number), never imply it
+  syncs the user's own phone.
+- **Accounts settings**: list/create WhatsApp accounts (Evolution API), a connection-health
+  indicator (`GET /accounts/:id/health` → connected/error, sanitized error only).
+- **Conversations/messages**: a simple inbox-style list (`GET /whatsapp/conversations`), thread
+  view (`GET /whatsapp/conversations/:id/messages`), inbound vs outbound bubble styling.
+- **Draft & confirm**: Mora can prepare a reply (`whatsapp_draft_reply`, conversational, no
+  REST endpoint) but sending is always a confirmation card — same pattern as Phase D's
+  `[Confirmer] [Annuler]`, never a silent auto-send.
+
+### Email (Mora's own mailbox(es))
+- Same framing caveat as WhatsApp: Mora's own account(s), never the user's personal inbox.
+- **Accounts settings**: IMAP/SMTP (or future Gmail/Graph) account setup, health check, a
+  "Sync now" button (`POST /accounts/:id/sync`).
+- **Threads/messages**: standard inbox/thread UI. Render `htmlBodySanitized` only (already
+  safe) — never fetch/render the original provider HTML.
+- **Draft & confirm**: same pattern as WhatsApp — `email_draft_reply` prepares text, `email_send`/
+  `email_send_attachment` always need an explicit confirmation card before anything is sent.
+
+### Calendar
+- **Day/week/month views** backed by `GET /calendar/events?from=&to=`. Works standalone (Mora's
+  own internal calendar) — no Google/Microsoft connection required to be useful.
+- **Create/edit event** forms map directly to `POST`/`PATCH /calendar/events`; a
+  "find a free slot" affordance maps to `GET /calendar/free-slots`.
+- Events created **conversationally** (`calendar_create_event`, N2) show the same confirmation
+  card pattern; events created via the **calendar screen itself** (direct REST) execute
+  immediately — same REST-is-explicit-confirmation rule as tasks/reminders in Phase D.
+
+### Connections settings (single overview page)
+A "Connexions" settings page bringing WhatsApp/Email/Calendar/LogistiGA/Piston together:
+- Each row: connector name, configured/not-configured state, health status
+  (connected/disconnected/error, sanitized), "last synced at".
+- LogistiGA/Piston have **no configuration UI** in Phase E (they're fixture/contract-level
+  internally, read-only, not user-configurable) — if shown at all, present them as
+  "Available (read-only)" informational rows, not connectable accounts.
+
+### Loading / empty / error states
+- **Loading**: document processing is genuinely asynchronous (seconds, not instant) — always
+  show a real progress state, never block the UI waiting for `ready`.
+- **Empty**: zero documents/contacts/events/conversations is a normal first-run state.
+- **Error**: `400` (validation, e.g. unsupported file type), `403` (not this user's
+  resource — should not normally be reachable via the UI), `404`.
+
+### Real JSON shapes and types
+See `API_CONTRACT.md`'s Documents/Contacts/Calendar/WhatsApp/Email sections, and `TYPES.md`
+for `Document`, `DocumentDetail`, `DocumentTable`, `DocumentChunkCitation`, `Contact`,
+`ContactIdentity`, `CalendarEvent`, `FreeSlot`, `WhatsAppAccount`, `WhatsAppConversation`,
+`WhatsAppMessage`, `EmailAccount`, `EmailThread`, `EmailMessage`.
+
+---
+
+## 15. Screens the frontend can already build with Phase A+B+C+C.5+D+E
 
 - **Login** / **Register** screens (Phase A auth).
 - **Main Chat screen**: send a message, see Mora's reply, with a route/space badge.
@@ -490,20 +576,29 @@ request/response examples, and `TYPES.md` for `Task`, `Reminder`, `PendingAction
 - **Notifications bell + list**, mark read/mark all read (§13).
 - **Confirmation card** in the chat screen for N2 tool calls, and an optional standalone
   **Pending Actions** view (§13).
+- **Document upload/list/detail** with status polling, tags, entities, tables (§14).
+- **Contacts list/detail**, trust-level management, identity linking (§14).
+- **Calendar day/week/month**, create/edit/cancel, free-slot finder (§14).
+- **WhatsApp/Email inbox-style screens** (Mora's own accounts), draft + confirmation-card
+  send flow (§14).
+- **Connections settings overview** page (§14).
 
-## 15. Explicitly NOT available yet (do not build UI for these)
+## 16. Explicitly NOT available yet (do not build UI for these)
 
-Documents/RAG over files, real *external* actions (WhatsApp, email, calendar integration,
-LogistiGA/Piston external APIs — Phase E), voice, speech recognition, vision, 3D avatar, n8n,
-conversation titles/rename/delete, pagination, per-space permissions, a working cross-scope
-toggle, password reset, audit log UI, a memory delete button, a manual "supersede" action,
-POST/PATCH for profile-facts or entities, a "reveal API key" feature (doesn't exist
-server-side), vision/STT/TTS/image/avatar provider testing (adapters not built yet — see
-`API_CONTRACT.md`), real per-complexity/route model switching, any N3/N4-level tool (the
-security levels are enforced end-to-end but Phase D ships no concrete tool at those levels),
-multi-step/chained tool calls in one turn (e.g. "complete my task called X" requires knowing
-the task's id — the LLM does not automatically look it up first; see the Phase D final report's
-"real LLM behavior" findings), and any notification channel other than the in-app list
+Real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta Cloud
+WhatsApp provider (only Evolution API is implemented, and only at contract/mock-test level —
+see the Phase E final report), OCR/scanned-document text extraction (a scanned PDF is marked
+`needs_review`, never silently indexed as empty), a public document download/preview URL
+(`storageKey` is internal only), real LogistiGA/Piston database access (fixture/contract-level
+only in Phase E), voice, speech recognition, vision, 3D avatar, n8n, conversation
+titles/rename/delete, pagination, per-space permissions, a working cross-scope toggle,
+password reset, audit log UI, a memory delete button, a manual "supersede" action, POST/PATCH
+for profile-facts or entities, a "reveal API key"/"reveal credentials" feature (doesn't exist
+server-side, for any connector), vision/STT/TTS/image/avatar provider testing, real
+per-complexity/route model switching, any N3/N4-level tool (the security levels are enforced
+end-to-end but no phase ships a concrete tool at those levels), multi-step/chained tool calls
+in one turn (e.g. "complete my task called X" requires knowing the task's id — the LLM does
+not automatically look it up first), and any notification channel other than the in-app list
 (no email/push/WhatsApp delivery of a reminder yet).
 
 ---
@@ -511,8 +606,8 @@ the task's id — the LLM does not automatically look it up first; see the Phase
 ## À maintenir à chaque phase
 
 `FRONTEND_HANDOFF.md`, `API_CONTRACT.md`, and `TYPES.md` are **living documents** — update
-all three at the end of every remaining phase (E, F, G, H) to reflect the real, shipped
-backend state, the same way this document was updated for Phase D (on top of what Phase C.5
+all three at the end of every remaining phase (F, G, H) to reflect the real, shipped
+backend state, the same way this document was updated for Phase E (on top of what Phase D
 wrote). Never let them describe a feature that isn't actually implemented yet.
 
 At **Phase H**, these three documents (accumulated across all phases) will be used to

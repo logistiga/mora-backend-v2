@@ -1,4 +1,4 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
@@ -633,12 +633,114 @@ the LLM** from `POST /messages` goes through the `pending_action` confirmation f
 
 ---
 
+## Documents & Document Intelligence (Phase E)
+
+- `POST /api/v1/documents` (`multipart/form-data`) — fields: `file`, `scope`, `space`. Accepts
+  PDF/DOCX/TXT/MD/CSV/XLSX only (25MB default max). Returns the `Document` row with
+  `status: "uploaded"`/`"queued"` — processing (extract → classify → tag → extract entities →
+  summarize → chunk → embed) happens asynchronously via BullMQ. Identical content
+  (SHA-256 checksum) re-uploaded by the same user/scope/space returns the existing document,
+  never a duplicate.
+- `GET /api/v1/documents?scope=&space=&status=&documentType=&tag=&source=&needsReview=` — list, scoped to the caller.
+- `GET /api/v1/documents/:id` — full detail: `{ document, tags: string[], entities: Entity[], tables: DocumentTable[] }`.
+- `GET /api/v1/documents/:id/status` — lightweight polling shape: `{ id, status, needsReview, errorMessage, processedAt }`.
+- `POST /api/v1/documents/:id/reprocess` — re-runs the pipeline (e.g. after a transient failure).
+- `PATCH /api/v1/documents/:id` — `{ title?, tags?: string[] }` (manual tag additions).
+- `POST /api/v1/documents/:id/archive`.
+- **`Document.status`**: `uploaded → queued → processing → ready | needs_review | failed | archived`.
+  `needs_review: true` means low classification confidence OR no extractable text (no OCR in
+  Phase E — a scanned PDF lands here, not silently indexed as empty).
+- **Citations**: results from document search always carry `documentId`, `documentTitle`, and
+  `page`/`section` when known — render as e.g. *"Source : Rapport Rotor — page 12"*.
+- **Tables**: CSV/XLSX (and any tables found in a PDF) are stored structurally
+  (`document_tables` + `document_table_rows`), not flattened to text only — analytical
+  questions ("quel client a le plus d'impayés ?") go through a controlled group-by/aggregate
+  query, never free-form SQL.
+
+## Contacts (Phase E)
+
+- `GET /api/v1/contacts?scope=&space=&trustLevel=&search=`.
+- `GET /api/v1/contacts/:id` — includes `identities: ContactIdentity[]`.
+- `POST /api/v1/contacts` — `{ name, scope, space, company?, trustLevel? }`.
+- `PATCH /api/v1/contacts/:id` — `{ name?, company?, trustLevel?, notes?, tags? }`.
+- `POST /api/v1/contacts/:id/identities` — `{ type: "whatsapp"|"email", value }`. The same
+  WhatsApp number/email can only ever belong to one contact per user — attaching an identity
+  already owned by a different contact returns `409`.
+- **`trustLevel`**: `unknown | known | trusted | vip | restricted | blocked`. `blocked` is
+  enforced by the WhatsApp/Email connectors (a blocked contact's inbound messages are never
+  stored beyond an audit entry, and no reply is ever drafted for them).
+
+## Calendar (Phase E)
+
+- `GET /api/v1/calendar/events?scope=&space=&from=&to=` — Mora's own internal calendar
+  (`MoraCalendarProvider`) — works standalone, no Google/Microsoft account needed.
+- `GET /api/v1/calendar/events/:id`.
+- `POST /api/v1/calendar/events` — `{ scope, space, title, description?, location?, startsAt, endsAt, participantContactIds? }`. `timezone` defaults to the backend's explicit `TimeContextService` timezone (never left implicit — see Phase D's date-hallucination fix).
+- `PATCH /api/v1/calendar/events/:id`.
+- `POST /api/v1/calendar/events/:id/cancel`.
+- `GET /api/v1/calendar/free-slots?scope=&space=&from=&to=&durationMinutes=` — real gaps
+  between existing events within working hours (8h–18h backend-timezone).
+
+## WhatsApp (Phase E — Mora's own number, never the user's personal WhatsApp)
+
+- `GET /api/v1/whatsapp/accounts`, `POST /api/v1/whatsapp/accounts` — `{ label, phoneNumber, provider: "evolution"|"meta_cloud", config?, apiKey? }`. Credentials AES-256-GCM encrypted, never returned.
+- `GET /api/v1/whatsapp/accounts/:id/health` — `{ connected: boolean, error? }`.
+- `GET /api/v1/whatsapp/conversations?accountId=`, `GET /api/v1/whatsapp/conversations/:id/messages`.
+- `POST /api/v1/webhooks/whatsapp/:accountId` — Evolution API webhook target (not a
+  frontend-facing endpoint), secured by a shared-secret header (`X-Webhook-Secret`,
+  `MORA_WHATSAPP_WEBHOOK_SECRET`).
+- Sending is **tool-only** (`whatsapp_send_message`/`whatsapp_send_document`, both N2 —
+  always a `pending_action`), never a direct REST "send" endpoint — see Tools & Actions.
+- **Test status**: Evolution API integration is real code, CONTRACT-tested only (mocked HTTP) —
+  no real Evolution instance was reachable without touching the production VPS. See the Phase E
+  final report.
+
+## Email (Phase E — Mora's own mailbox(es), never the user's personal inbox)
+
+- `GET /api/v1/email/accounts`, `POST /api/v1/email/accounts` — `{ label, address, provider: "imap_smtp"|"gmail"|"microsoft_graph", imapHost?, imapPort?, smtpHost?, smtpPort?, username?, password? }`. Credentials encrypted, never returned.
+- `GET /api/v1/email/accounts/:id/health`, `POST /api/v1/email/accounts/:id/sync` (pulls recent unseen messages via IMAP).
+- `GET /api/v1/email/threads?accountId=`, `GET /api/v1/email/threads/:id/messages`.
+- Inbound HTML is sanitized at ingest (`htmlBodySanitized`) — the raw provider HTML is never
+  stored or rendered.
+- Sending is **tool-only** (`email_send`/`email_send_attachment`, both N2), never a direct REST
+  endpoint.
+- **Test status**: IMAP/SMTP integration is real code (`imapflow`/`nodemailer`),
+  CONTRACT-tested only — no real mailbox credentials were available. See the Phase E final report.
+
+## Business connectors — LogistiGA / Piston (Phase E, READ-ONLY)
+
+No REST endpoints — access is exclusively through the `logistiga_*`/`piston_*` tools (N1,
+read-only, only usable in `scope: "professional"` + the matching `space`). **Test status**: no
+real LogistiGA/Piston database schema or credentials were available — both connectors are
+FIXTURE-based (small synthetic datasets), documented explicitly as such. Real schema inspection
+and a real read-only DB role are prerequisites for a genuine connector, deferred until
+authorized access is available.
+
+## Tools & Actions — Phase E additions
+
+34 new tools registered alongside Phase D's 12 (46 total, `GET /tools` lists all of them):
+`search_documents`, `get_document`, `search_document_content`, `query_document_table` (N1);
+`list_contacts`, `get_contact`, `search_contacts` (N1), `create_contact`, `update_contact` (N2);
+`whatsapp_list_conversations`, `whatsapp_read_messages`, `whatsapp_search_messages`,
+`whatsapp_get_contact`, `whatsapp_draft_reply` (N1), `whatsapp_send_message`,
+`whatsapp_send_document` (N2); `email_list_threads`, `email_read_thread`, `email_search`,
+`email_draft_reply` (N1), `email_send`, `email_send_attachment` (N2); `calendar_list_events`,
+`calendar_get_event`, `calendar_find_free_slots` (N1), `calendar_create_event`,
+`calendar_update_event`, `calendar_cancel_event` (N2); `logistiga_search`,
+`logistiga_get_entity`, `logistiga_get_summary`, `piston_search`, `piston_get_entity`,
+`piston_get_summary` (N1, professional-only). Every N2 tool follows the exact same
+`pending_action` confirmation flow documented in Phase D — nothing new for the frontend to
+learn beyond the tool names.
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase D) for: audit entries, conversation rename/delete/title,
+No endpoint exists (as of Phase E) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
-endpoint, documents/RAG, WhatsApp/email/calendar/other external actions (Phase E), voice,
-avatar, a "reveal API key" endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar
-provider testing (no adapters built yet, `POST /:id/test` returns `success: false` for those
-kinds today), and no N3/N4 tool of any kind (the security levels exist and are enforced, but
-Phase D ships no concrete tool at those levels).
+endpoint, real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta
+Cloud WhatsApp provider, voice, avatar, n8n (Phase F+), a "reveal API key"/"reveal credentials"
+endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar provider testing, and no
+N3/N4 tool of any kind (the security levels exist and are enforced, but neither phase ships a
+concrete tool at those levels). OCR is not implemented — a scanned/image-only PDF is marked
+`needs_review`, never silently indexed as empty.

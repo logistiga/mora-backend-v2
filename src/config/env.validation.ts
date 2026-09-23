@@ -163,6 +163,19 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   MORA_DEFAULT_TIMEZONE?: string;
+
+  // Optional: Phase E local document storage.
+  @IsOptional()
+  @IsString()
+  MORA_DOCUMENTS_STORAGE_DIR?: string;
+
+  @IsOptional()
+  @IsInt()
+  MORA_DOCUMENTS_MAX_UPLOAD_BYTES?: number;
+
+  @IsOptional()
+  @IsString()
+  MORA_WHATSAPP_WEBHOOK_SECRET?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

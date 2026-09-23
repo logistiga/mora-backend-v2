@@ -31,3 +31,7 @@ Thumbs.db
 coverage/
 
 /src/generated/prisma
+
+# Phase E: local document storage (LocalDocumentStorageProvider) — real
+# uploaded file content, never versioned.
+/storage/
