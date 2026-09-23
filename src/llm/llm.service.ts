@@ -5,6 +5,7 @@ import { LlmCallLogger } from '../ai-providers/llm-call-logger.service.js';
 import type {
   LlmCompletionRequest,
   LlmProviderInterface,
+  LlmToolCallRequest,
 } from './llm-provider.interface.js';
 import { LLM_PROVIDER } from './llm-provider.interface.js';
 
@@ -13,6 +14,13 @@ export interface LlmResponse {
   content: string;
   provider: string;
   model: string | null;
+  /**
+   * Only ever populated when the request included `tools` AND the call went
+   * through a DB AiProvider (Phase D tool-calling requires a real DB
+   * provider, same as embeddings/memory in Phase C — the legacy env
+   * fallback never forwards `tools`, so it can never propose a tool call).
+   */
+  toolCalls?: LlmToolCallRequest[];
 }
 
 export interface LlmSelectionContext {
@@ -102,7 +110,13 @@ export class LlmService {
         latencyMs: Date.now() - start,
         status: 'success',
       });
-      return { configured: true, content: result.content, provider: connection.provider, model: result.model };
+      return {
+        configured: true,
+        content: result.content,
+        provider: connection.provider,
+        model: result.model,
+        toolCalls: result.toolCalls,
+      };
     } catch (error) {
       this.logger.error(
         `Chat completion failed via AiProvider ${connection.providerRowId}`,

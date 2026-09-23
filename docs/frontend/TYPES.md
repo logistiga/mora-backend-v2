@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5)
+# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -101,6 +101,7 @@ interface MessageResponse {
   scope: MoraScope;
   space: MoraSpace;
   confidence: number; // 0..1
+  action?: ConfirmationRequiredAction; // Phase D — see below; absent on every pre-Phase-D response
 }
 
 // ---- Memory (Phase C) -------------------------------------------------------
@@ -253,6 +254,124 @@ interface AiProviderStatus {
   >;
 }
 
+// ---- Tools & Actions (Phase D) ----------------------------------------------
+
+type SecurityLevel = 'N1' | 'N2' | 'N3' | 'N4';
+// N1 auto (executes immediately) | N2 confirmation (always pending_action) |
+// N3 sensitive (reserved, ships no tool in Phase D) | N4 critical (never executed).
+
+type ToolScope = 'personal' | 'professional';
+
+interface ToolDiscoveryView {
+  name: string;
+  description: string;
+  securityLevel: SecurityLevel;
+  requiresConfirmation: boolean;
+  allowedScopes: ToolScope[];
+}
+
+interface ConfirmationRequiredAction {
+  type: 'confirmation_required';
+  pendingActionId: string; // uuid
+  tool: string; // e.g. "create_task", "create_reminder"
+  securityLevel: SecurityLevel;
+  summary: string; // human-readable, safe to render directly (e.g. "Créer une tâche : \"Appeler Jean\"")
+}
+
+type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
+type TaskSource = 'manual' | 'tool'; // 'manual' = direct REST, 'tool' = approved LLM tool call
+
+interface Task {
+  id: string;
+  userId: string;
+  scope: ToolScope;
+  space: string;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  dueAt: string | null;
+  completedAt: string | null;
+  source: TaskSource;
+  sourceConversationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type ReminderStatus = 'scheduled' | 'delivered' | 'cancelled' | 'failed';
+
+interface Reminder {
+  id: string;
+  userId: string;
+  scope: ToolScope;
+  space: string;
+  title: string;
+  message: string | null;
+  remindAt: string;
+  status: ReminderStatus;
+  source: TaskSource;
+  sourceConversationId: string | null;
+  bullJobId: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type PendingActionStatus =
+  | 'pending' | 'approved' | 'rejected' | 'executed' | 'expired' | 'cancelled' | 'failed';
+
+interface PendingAction {
+  id: string;
+  userId: string;
+  conversationId: string | null;
+  toolName: string;
+  toolVersion: string;
+  scope: ToolScope;
+  space: string;
+  securityLevel: SecurityLevel;
+  input: Record<string, unknown>;
+  result: Record<string, unknown> | null; // populated once status is "executed"/"failed"
+  status: PendingActionStatus;
+  expiresAt: string | null; // 30 min after creation
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  executedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+type ApproveOutcomeStatus = 'executed' | 'already_processed' | 'expired';
+
+interface ApproveResult {
+  status: ApproveOutcomeStatus;
+  pendingAction: PendingAction;
+  toolResultOk?: boolean; // only when status === 'executed'
+}
+
+type RejectOutcomeStatus = 'rejected' | 'already_processed';
+
+interface RejectResult {
+  status: RejectOutcomeStatus;
+  pendingAction: PendingAction;
+}
+
+type NotificationStatus = 'unread' | 'read';
+type NotificationType = 'reminder' | string; // 'reminder' is the only type Phase D produces
+
+interface Notification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  status: NotificationStatus;
+  metadata: Record<string, unknown>; // e.g. { reminderId, scope, space } for type: 'reminder'
+  readAt: string | null;
+  createdAt: string;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -276,3 +395,8 @@ interface ApiError {
   a form component should keep a plaintext key entirely in local component state and send it
   only in the `POST`/`PATCH` request body, never store it in app state/cache alongside the rest
   of the provider object.
+- Phase D: `MessageResponse.action` is the **only** signal that a confirmation is needed —
+  never infer it from `response` text (Mora's phrasing there is not a stable contract). Treat
+  every REST mutation under `/tasks`, `/reminders` as immediate (no `pending_action` involved),
+  and every `action` coming back from `/messages` as requiring an explicit
+  `POST /pending-actions/:id/approve` or `/reject` before anything happens.

@@ -38,12 +38,17 @@ model User {
   role         UserRole @default(USER)
   isActive     Boolean  @default(true) @map("is_active")
 
-  refreshTokens RefreshToken[]
-  conversations Conversation[]
-  memories      Memory[]
-  entities      Entity[]
-  profileFacts  ProfileFact[]
-  aiProviders   AiProvider[]
+  refreshTokens  RefreshToken[]
+  conversations  Conversation[]
+  memories       Memory[]
+  entities       Entity[]
+  profileFacts   ProfileFact[]
+  aiProviders    AiProvider[]
+  tasks          Task[]
+  reminders      Reminder[]
+  notifications  Notification[]
+  pendingActions PendingAction[]
+  toolCalls      ToolCall[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -410,4 +415,161 @@ model LlmCall {
   @@index([userId])
   @@index([providerId])
   @@map("llm_calls")
+}
+
+// ============================================================================
+// Phase D — Tools, actions, permissions, confirmations, tasks, reminders
+//
+// status/securityLevel/source kept as plain strings (validated in the app
+// layer, see src/tools/tool.types.ts) for the same reason as elsewhere in
+// this schema: new tools/security levels should never require a migration.
+//
+// Idempotence design: PendingAction.idempotencyKey is unique and generated
+// once when the pending action is created. Approval is a single atomic
+// conditional UPDATE (`status = 'pending' -> 'executing'`, see
+// PendingActionService.approve) — a second concurrent approval finds 0 rows
+// affected and returns the already-in-flight/executed state instead of
+// re-running the tool. This is the real safety net against double
+// confirmation, not a hash of the input (two identical user requests are
+// legitimately two different pending actions / two different tasks).
+// ============================================================================
+
+model Task {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String // 'personal' | 'professional'
+  space String
+
+  title       String
+  description String?
+  status      String @default("pending") // pending|in_progress|completed|cancelled
+  priority    String @default("normal") // low|normal|high|urgent
+
+  dueAt       DateTime? @map("due_at")
+  completedAt DateTime? @map("completed_at")
+
+  source                String  @default("manual") // manual|tool
+  sourceConversationId  String? @map("source_conversation_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, scope, space, status])
+  @@map("tasks")
+}
+
+model Reminder {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String
+  space String
+
+  title    String
+  message  String?
+  remindAt DateTime @map("remind_at")
+
+  status String @default("scheduled") // scheduled|delivered|cancelled|failed
+
+  source                String  @default("manual") // manual|tool
+  sourceConversationId  String? @map("source_conversation_id") @db.Uuid
+  bullJobId             String? @map("bull_job_id")
+
+  deliveredAt DateTime? @map("delivered_at")
+  cancelledAt DateTime? @map("cancelled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, scope, space, status])
+  @@map("reminders")
+}
+
+model Notification {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type     String // e.g. 'reminder'
+  title    String
+  message  String
+  status   String  @default("unread") // unread|read
+  metadata Json?
+
+  readAt DateTime? @map("read_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, status])
+  @@map("notifications")
+}
+
+model PendingAction {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId String? @map("conversation_id") @db.Uuid
+
+  toolName      String @map("tool_name")
+  toolVersion   String @map("tool_version")
+  scope         String
+  space         String
+  securityLevel String @map("security_level") // N2 | N3 (N1 never creates a pending action, N4 is never created)
+
+  input  Json
+  result Json?
+  status String @default("pending") // pending|approved|rejected|executed|expired|cancelled|failed
+
+  idempotencyKey String @unique @map("idempotency_key")
+
+  expiresAt  DateTime? @map("expires_at")
+  approvedAt DateTime? @map("approved_at")
+  rejectedAt DateTime? @map("rejected_at")
+  executedAt DateTime? @map("executed_at")
+
+  toolCalls ToolCall[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@map("pending_actions")
+}
+
+// One row per tool execution attempt — observability + audit for the whole
+// Tools/Actions system, mirroring what LlmCall does for raw LLM calls.
+// Never stores a secret; `input`/`output` hold only validated tool
+// arguments/results, never raw provider payloads or credentials.
+model ToolCall {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId  String? @map("conversation_id") @db.Uuid
+  pendingActionId String? @map("pending_action_id") @db.Uuid
+  pendingAction   PendingAction? @relation(fields: [pendingActionId], references: [id], onDelete: SetNull)
+
+  toolName      String @map("tool_name")
+  toolVersion   String @map("tool_version")
+  scope         String
+  space         String
+  securityLevel String @map("security_level")
+
+  input          Json
+  output         Json?
+  status         String // requested|pending_confirmation|executing|success|failed|rejected|cancelled
+  errorCode      String? @map("error_code")
+  latencyMs      Int?    @map("latency_ms")
+  idempotencyKey String? @map("idempotency_key")
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  completedAt DateTime? @map("completed_at")
+
+  @@index([userId])
+  @@index([pendingActionId])
+  @@map("tool_calls")
 }

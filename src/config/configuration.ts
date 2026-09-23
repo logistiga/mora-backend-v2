@@ -43,6 +43,14 @@ export interface AppConfig {
   };
   crossScopeEnabled: boolean;
   encryptionKey?: string;
+  /**
+   * Phase D: the IANA timezone used to phrase the "current time" reference
+   * given to the LLM (see TimeContextService) when no real per-user
+   * timezone exists yet — User has no `timezone` column today. Documented,
+   * explicit, and configurable (never a silent/arbitrary choice by the
+   * model itself) — see AGENTS Phase D correction §1.
+   */
+  defaultTimezone: string;
 }
 
 export default (): { app: AppConfig } => ({
@@ -105,5 +113,9 @@ export default (): { app: AppConfig } => ({
     // provider's API key; SecretEncryptionService.validateEncryptionKey()
     // throws a clear error at that point instead.
     encryptionKey: process.env.MORA_ENCRYPTION_KEY || undefined,
+    // No per-user timezone stored today (User has no `timezone` field) — UTC
+    // is the explicit, documented default rather than a silent choice left
+    // to the model. Configurable per deployment via MORA_DEFAULT_TIMEZONE.
+    defaultTimezone: process.env.MORA_DEFAULT_TIMEZONE || 'UTC',
   },
 });

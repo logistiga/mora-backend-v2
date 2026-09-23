@@ -1,10 +1,11 @@
-import type { LlmMessage } from '../../llm/llm-provider.interface.js';
+import type { LlmMessage, LlmToolCallRequest, LlmToolDefinition } from '../../llm/llm-provider.interface.js';
 import type { ResolvedProviderConnection } from '../ai-provider.types.js';
 
 export interface ChatAdapterRequest {
   messages: LlmMessage[];
   temperature?: number;
   maxTokens?: number;
+  tools?: LlmToolDefinition[];
 }
 
 export interface ChatAdapterResult {
@@ -13,6 +14,7 @@ export interface ChatAdapterResult {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  toolCalls?: LlmToolCallRequest[];
 }
 
 /**

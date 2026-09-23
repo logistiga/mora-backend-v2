@@ -1,7 +1,8 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase C.5 (AI Provider Manager, on top of Phase A
-auth, Phase B router/agents/orchestrator, and Phase C intelligent memory).**
+**Backend phase covered by this document: Phase D (Tools/Actions/Permissions/Confirmations/
+Tasks/Reminders, on top of Phase A auth, Phase B router/agents/orchestrator, Phase C
+intelligent memory, and Phase C.5 AI Provider Manager).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
 building Mora's frontend without re-reading the backend source. Everything here describes
 what the backend **actually does today** — nothing aspirational.
@@ -372,7 +373,102 @@ TypeScript shapes.
 
 ---
 
-## 13. Screens the frontend can already build with Phase A+B+C+C.5
+## 13. Phase D — Actions & Productivity UX (Tasks, Reminders, Notifications, Pending Actions)
+
+Mora can now **act** — create/manage tasks and reminders — but every action the LLM proposes
+goes through an explicit user confirmation before anything happens. This section is the
+conversational + productivity UX this unlocks.
+
+### What the backend actually does
+- Every tool has a **security level**: `N1` (auto — read-only/low-risk, executes immediately),
+  `N2` (confirmation — always needs approval: create/update/complete a task, create/cancel a
+  reminder), `N3` (reserved for sensitive external actions, Phase E), `N4` (reserved, critical,
+  never auto-executed — no N4 tool exists yet).
+- When the LLM (from `POST /messages`) proposes an **N1** tool (e.g. "what are my tasks?" →
+  `list_tasks`), it executes immediately and Mora's `response` already contains a natural
+  summary — nothing new for the frontend to do beyond rendering the reply as usual.
+- When the LLM proposes an **N2** tool (e.g. "add a task to call Jean" → `create_task`), the
+  backend does **NOT** execute it. It creates a `pending_action` and `POST /messages` returns
+  an extra `action` field (see `API_CONTRACT.md`/`TYPES.md`) alongside a natural-language
+  confirmation question in `response`.
+- A **direct REST call** (`POST /tasks`, `POST /reminders`, ...) executes immediately, even
+  though the same tool is N2 when proposed by the LLM — the REST call itself, made by an
+  authenticated user, IS the confirmation. Build a "Tasks"/"Reminders" management screen that
+  talks to these endpoints directly, with no confirmation step of its own.
+- A reminder that comes due delivers as exactly one internal **Notification** (`type:
+  "reminder"`) — no email/push/WhatsApp yet (Phase E). Poll `GET /notifications?status=unread`
+  or refresh on screen focus; there is no realtime push transport yet (same limitation as
+  Phase B, see §7).
+- A `pending_action` **expires 30 minutes** after creation if never approved/rejected.
+
+### Conversational confirmation flow (what to build in the chat screen)
+1. User sends a message; `POST /messages` responds with `action: { type:
+   "confirmation_required", pendingActionId, tool, securityLevel, summary }` alongside the
+   normal `response` text.
+2. Render **Mora's `response` text** as usual (it already reads naturally, e.g. *"Créer une
+   tâche : \"Appeler Jean\". Veux-tu confirmer ?"*), plus a **confirmation card** with two
+   buttons:
+   ```
+   [Confirmer]  [Annuler]
+   ```
+3. **Confirmer** → `POST /pending-actions/:id/approve`. On success (`status: "executed"`),
+   replace the card with a short confirmation, e.g. **"✓ Tâche créée"**, and refresh any visible
+   task/reminder list. If `toolResultOk: false`, show a plain failure message instead — never a
+   raw error.
+4. **Annuler** → `POST /pending-actions/:id/reject`. Replace the card with a neutral
+   acknowledgement (e.g. *"D'accord, annulé."*) — nothing was created.
+5. Calling approve/reject a second time on the same id returns `status: "already_processed"`
+   (approve) or is simply the terminal state (reject) — treat this the same as the first
+   successful call in the UI (idempotent by design; never show an error for a double-tap).
+6. If the user waits too long, a later approve attempt returns `status: "expired"` — show
+   "Cette action a expiré, merci de reformuler votre demande." and remove the card.
+
+### Frontend should build
+- **Tasks screen**: list (filterable by scope/space/status), create form, edit, complete
+  (checkbox/swipe), cancel. Standard CRUD against `/tasks` — no confirmation step (§ above).
+- **Reminders screen**: list (filterable by status), create form (title, message, date/time
+  picker → ISO 8601 `remindAt`), cancel. Standard CRUD against `/reminders`.
+- **Notifications**: a bell icon with an unread badge (`GET /notifications?status=unread`),
+  a dropdown/list, mark-one-read on click, "mark all read" action.
+- **Confirmation card** component in the chat screen (see flow above) — this is the one new,
+  Phase-D-specific conversational UI element.
+- **Pending actions view** (optional but recommended): `GET /pending-actions` — a small list of
+  anything still awaiting the user's decision, in case they navigated away from the chat before
+  responding to a confirmation card. Same approve/reject actions as the inline card.
+
+### Loading / empty / error states
+- **Loading**: standard list/form skeletons; the confirmation card's buttons should show a
+  brief inline spinner while the approve/reject request is in flight (it does real work —
+  create a task, schedule a BullMQ job, etc — so it's not instantaneous).
+- **Empty**: a new user has zero tasks/reminders/notifications — normal state, not an error;
+  show a prompt to create a first one, not a blocking error.
+- **Error**: `400` (validation — e.g. missing `title`, invalid `remindAt`), `401` (session
+  expired), `403` (task/reminder/pending action belongs to another user — should not normally
+  be reachable via the UI, but never assume; handle it like any other 403).
+- **Tool execution status** to reflect in the UI (from `PendingAction.status`): `pending`
+  (awaiting the user), `approved`/`executing` (brief transient state), `executed` (done — show
+  the result), `failed` (the tool ran but errored — show a plain failure message), `rejected`
+  (user declined), `expired` (timed out unanswered), `cancelled`.
+
+### Security — what the frontend must never do
+- Never let a UI element call `approve` on a `pendingActionId` the user did not see/click a
+  button for — there is no legitimate "auto-approve" flow in Phase D; every N2/N3 action is a
+  real, explicit human decision.
+- Never construct a `pending_action` id or a tool name client-side and call `/approve` blind —
+  always come from a real `action` field the backend returned.
+- Treat `PendingAction.input`/`.result` as **display-only** debug data (e.g. for the optional
+  pending-actions view) — never re-derive UI logic from their shape beyond what
+  `TYPES.md` documents; the backend is the only authority on what a tool call actually did.
+
+### Real JSON shapes and types
+See `API_CONTRACT.md`'s "Tools & Actions (Phase D)" section for every endpoint with full
+request/response examples, and `TYPES.md` for `Task`, `Reminder`, `PendingAction`,
+`Notification`, `ConfirmationRequiredAction`, `ApproveResult`, `RejectResult`, and
+`ToolDiscoveryView`.
+
+---
+
+## 14. Screens the frontend can already build with Phase A+B+C+C.5+D
 
 - **Login** / **Register** screens (Phase A auth).
 - **Main Chat screen**: send a message, see Mora's reply, with a route/space badge.
@@ -389,24 +485,34 @@ TypeScript shapes.
 - **Conversation summary indicator** in the chat screen (§11).
 - **"IA & API" settings page**: provider list, create/edit, test, enable/disable, set default,
   delete, status overview (§12).
+- **Tasks screen**: list/create/edit/complete/cancel (§13).
+- **Reminders screen**: list/create/cancel (§13).
+- **Notifications bell + list**, mark read/mark all read (§13).
+- **Confirmation card** in the chat screen for N2 tool calls, and an optional standalone
+  **Pending Actions** view (§13).
 
-## 14. Explicitly NOT available yet (do not build UI for these)
+## 15. Explicitly NOT available yet (do not build UI for these)
 
-Documents/RAG over files, tools/actions the assistant can execute, WhatsApp, email, calendar
-integration, LogistiGA/Piston external APIs, voice, speech recognition, vision, 3D avatar,
-n8n, conversation titles/rename/delete, pagination, per-space permissions, a working
-cross-scope toggle, password reset, audit log UI, a memory delete button, a manual "supersede"
-action, POST/PATCH for profile-facts or entities, a "reveal API key" feature (doesn't exist
+Documents/RAG over files, real *external* actions (WhatsApp, email, calendar integration,
+LogistiGA/Piston external APIs — Phase E), voice, speech recognition, vision, 3D avatar, n8n,
+conversation titles/rename/delete, pagination, per-space permissions, a working cross-scope
+toggle, password reset, audit log UI, a memory delete button, a manual "supersede" action,
+POST/PATCH for profile-facts or entities, a "reveal API key" feature (doesn't exist
 server-side), vision/STT/TTS/image/avatar provider testing (adapters not built yet — see
-`API_CONTRACT.md`), real per-complexity/route model switching.
+`API_CONTRACT.md`), real per-complexity/route model switching, any N3/N4-level tool (the
+security levels are enforced end-to-end but Phase D ships no concrete tool at those levels),
+multi-step/chained tool calls in one turn (e.g. "complete my task called X" requires knowing
+the task's id — the LLM does not automatically look it up first; see the Phase D final report's
+"real LLM behavior" findings), and any notification channel other than the in-app list
+(no email/push/WhatsApp delivery of a reminder yet).
 
 ---
 
 ## À maintenir à chaque phase
 
 `FRONTEND_HANDOFF.md`, `API_CONTRACT.md`, and `TYPES.md` are **living documents** — update
-all three at the end of every remaining phase (D, E, F, G, H) to reflect the real, shipped
-backend state, the same way this document was updated for Phase C.5 (on top of what Phase C
+all three at the end of every remaining phase (E, F, G, H) to reflect the real, shipped
+backend state, the same way this document was updated for Phase D (on top of what Phase C.5
 wrote). Never let them describe a feature that isn't actually implemented yet.
 
 At **Phase H**, these three documents (accumulated across all phases) will be used to
