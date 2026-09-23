@@ -51,6 +51,13 @@ export interface AppConfig {
    * model itself) — see AGENTS Phase D correction §1.
    */
   defaultTimezone: string;
+  documents: {
+    storageDir: string;
+    maxUploadBytes: number;
+  };
+  whatsapp: {
+    webhookSecret?: string;
+  };
 }
 
 export default (): { app: AppConfig } => ({
@@ -117,5 +124,18 @@ export default (): { app: AppConfig } => ({
     // is the explicit, documented default rather than a silent choice left
     // to the model. Configurable per deployment via MORA_DEFAULT_TIMEZONE.
     defaultTimezone: process.env.MORA_DEFAULT_TIMEZONE || 'UTC',
+    // Phase E: local document storage (S3/MinIO-ready via DocumentStorageInterface).
+    documents: {
+      storageDir: process.env.MORA_DOCUMENTS_STORAGE_DIR || './storage/documents',
+      maxUploadBytes: parseInt(process.env.MORA_DOCUMENTS_MAX_UPLOAD_BYTES ?? '26214400', 10), // 25MB default
+    },
+    // Phase E: shared-secret verification for the Evolution API webhook
+    // (AGENTS §27) — absent by design until an operator configures a real
+    // WhatsApp account; the webhook then accepts any request unauthenticated
+    // in dev, which is why this MUST be set before exposing the endpoint
+    // publicly.
+    whatsapp: {
+      webhookSecret: process.env.MORA_WHATSAPP_WEBHOOK_SECRET || undefined,
+    },
   },
 });

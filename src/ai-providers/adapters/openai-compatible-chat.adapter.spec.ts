@@ -90,4 +90,67 @@ describe('OpenAiCompatibleChatAdapter', () => {
     expect(adapter.supportedProviders).toContain('openai');
     expect(adapter.supportedProviders).toContain('custom_openai_compatible');
   });
+
+  describe('tool_calls argument normalization (post-review correction, AGENTS §1/§2)', () => {
+    function respondWithToolCall(argumentsField: unknown) {
+      fetchMock.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [{ id: 'call_1', function: { name: 'list_pending_actions', arguments: argumentsField } }],
+                },
+              },
+            ],
+            model: 'gpt-4o-mini',
+          }),
+          { status: 200 },
+        ),
+      );
+    }
+
+    it('B. normalizes the string "{}" to a real empty object', async () => {
+      respondWithToolCall('{}');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('C. normalizes a missing/undefined arguments field to an empty object (never throws)', async () => {
+      respondWithToolCall(undefined);
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('D. normalizes an empty string to an empty object', async () => {
+      respondWithToolCall('');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('D. normalizes a whitespace-only string to an empty object', async () => {
+      respondWithToolCall('   ');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('normalizes the literal string "null" to an empty object, never a null value', async () => {
+      respondWithToolCall('null');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('F. malformed JSON never throws — normalizes to an empty object (controlled error)', async () => {
+      respondWithToolCall('{not valid json');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({});
+    });
+
+    it('a real, populated arguments object is parsed and preserved exactly', async () => {
+      respondWithToolCall('{"taskId":"t1","priority":"high"}');
+      const result = await adapter.complete(baseConnection, { messages: [{ role: 'user', content: 'x' }] });
+      expect(result.toolCalls?.[0].arguments).toEqual({ taskId: 't1', priority: 'high' });
+    });
+  });
 });

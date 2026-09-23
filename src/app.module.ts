@@ -8,12 +8,17 @@ import { AgentsModule } from './agents/agents.module.js';
 import { AiProvidersModule } from './ai-providers/ai-providers.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { BusinessConnectorsModule } from './business-connectors/business-connectors.module.js';
+import { CalendarModule } from './calendar/calendar.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/configuration.js';
+import { ContactsModule } from './contacts/contacts.module.js';
 import { ContextModule } from './context/context.module.js';
 import { ConversationsModule } from './conversations/conversations.module.js';
 import { DatabaseModule } from './database/database.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
+import { EmailModule } from './email/email.module.js';
 import { EmbeddingModule } from './embedding/embedding.module.js';
 import { HealthModule } from './health/health.module.js';
 import { LlmModule } from './llm/llm.module.js';
@@ -29,6 +34,7 @@ import { RouterModule } from './router/router.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 import { ToolsModule } from './tools/tools.module.js';
 import { UsersModule } from './users/users.module.js';
+import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
 
 @Module({
   imports: [
@@ -80,6 +86,12 @@ import { UsersModule } from './users/users.module.js';
     TasksModule,
     NotificationsModule,
     RemindersModule,
+    DocumentsModule,
+    ContactsModule,
+    CalendarModule,
+    WhatsAppModule,
+    EmailModule,
+    BusinessConnectorsModule,
     ToolsModule,
     PendingActionsModule,
     OrchestratorModule,

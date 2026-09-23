@@ -49,6 +49,12 @@ model User {
   notifications  Notification[]
   pendingActions PendingAction[]
   toolCalls      ToolCall[]
+  documents      Document[]
+  contacts       Contact[]
+  contactIdentities ContactIdentity[]
+  whatsAppAccounts  WhatsAppAccount[]
+  emailAccounts     EmailAccount[]
+  calendarEvents    CalendarEvent[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -246,7 +252,8 @@ model Entity {
   aliases  String[] @default([])
   metadata Json?
 
-  memoryEntities MemoryEntity[]
+  memoryEntities   MemoryEntity[]
+  documentEntities DocumentEntity[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -572,4 +579,509 @@ model ToolCall {
   @@index([userId])
   @@index([pendingActionId])
   @@map("tool_calls")
+}
+
+// ============================================================================
+// Phase E — Connections + Document Intelligence
+//
+// Design decisions (documented per AGENTS Phase E §1/§13/§15):
+//
+// - Classification and summary are single-per-document (Document.documentType/
+//   title/language/classificationConfidence/summary/keyPoints) rather than
+//   separate `document_classifications`/`document_summaries` tables: Phase E
+//   never needs classification/summary history, and a real history
+//   requirement can add a table later without touching this one.
+// - `Tag` is a small, global, normalized controlled vocabulary (name is
+//   unique) — isolation lives in `DocumentTag`/its `Document`, not in `Tag`
+//   itself, the same way `Entity` already works per-user. This is what keeps
+//   tag explosion under control across users (AGENTS §7): "facture" is one
+//   row, not one per user.
+// - `DocumentEntity` links to the EXISTING `Entity` model (Phase C) instead
+//   of a parallel entity system (AGENTS §8).
+// - `DocumentTable` + `DocumentTableRow` (a real rows table, not one giant
+//   JSON blob) so a large spreadsheet/table stays queryable and paginable
+//   (AGENTS §15).
+// - pgvector/HNSW strategy (AGENTS §13): `DocumentChunk.embedding` stays the
+//   same dimensionless `Unsupported("vector")` brute-force column Memory
+//   already uses (multi-provider flexibility preserved — never broken).
+//   ADDITIONALLY, `embeddingVector1536` is a real fixed-dimension `vector(1536)`
+//   column, populated only when the embedding actually has 1536 dimensions
+//   (today's real provider, text-embedding-3-small) with a genuine HNSW
+//   index (added via raw SQL in this migration — see migration.sql). Phase
+//   E's retrieval path uses the HNSW-indexed column when the active
+//   embedding provider is 1536-dimensional (the common, real case) and
+//   falls back to the Phase C brute-force scan otherwise — real ANN
+//   performance now, without hardcoding 1536 as the only supported
+//   dimension anywhere in application code (AiModelSelectorService/
+//   EmbeddingService remain fully multi-provider).
+// - Connector health (AGENTS §51) is computed on demand from each
+//   connector's own state (e.g. `WhatsAppAccount.status`/`lastSyncAt`/
+//   `lastError`), not a separate stored table — avoids an always-stale
+//   duplicate of state that already lives on the account/thread rows.
+// ============================================================================
+
+model Document {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String // 'personal' | 'professional'
+  space String
+
+  filename         String
+  originalFilename String @map("original_filename")
+  mimeType         String @map("mime_type")
+  extension        String
+  sizeBytes        Int    @map("size_bytes")
+
+  documentType String? @map("document_type") // e.g. invoice|contract|report|other — AI-suggested, never security-relevant
+  title        String?
+  language     String?
+
+  source   String  @default("upload") // 'upload' | 'whatsapp' | 'email'
+  sourceId String? @map("source_id") // e.g. the WhatsAppMessage/EmailMessage id, when source != 'upload'
+
+  storageProvider String @map("storage_provider") // 'local' today; 's3'/'minio' ready later
+  storageKey      String @map("storage_key")
+
+  status String @default("uploaded") // uploaded|queued|processing|ready|needs_review|failed|archived
+
+  classificationConfidence Float?  @map("classification_confidence")
+  needsReview              Boolean @default(false) @map("needs_review")
+
+  summary   String?
+  keyPoints Json?   @map("key_points")
+
+  checksum     String // SHA-256 hex, for dedup
+  errorMessage String? @map("error_message")
+
+  chunks    DocumentChunk[]
+  docTags   DocumentTag[]
+  docEntities DocumentEntity[]
+  tables    DocumentTable[]
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  processedAt DateTime? @map("processed_at")
+
+  @@index([userId, scope, space, status])
+  @@index([checksum])
+  @@index([source, sourceId])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  chunkIndex Int     @map("chunk_index")
+  page       Int?
+  section    String?
+  content    String
+
+  tokenCount Int? @map("token_count")
+
+  // See the Phase E design note above: dimensionless brute-force column
+  // (any provider/dimension) plus a real fixed-dimension HNSW-indexed
+  // column populated only for 1536-dim embeddings (today's real provider).
+  embedding           Unsupported("vector")?
+  embeddingVector1536  Unsupported("vector(1536)")? @map("embedding_vector_1536")
+  embeddingModel       String? @map("embedding_model")
+  embeddingDimensions  Int?    @map("embedding_dimensions")
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([documentId, chunkIndex])
+  @@map("document_chunks")
+}
+
+model Tag {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique // normalized: lowercase, trimmed, spaces collapsed — see TagNormalizationService
+
+  documentTags DocumentTag[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("tags")
+}
+
+model DocumentTag {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  tagId      String   @map("tag_id") @db.Uuid
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  source     String  @default("manual") // 'manual' | 'ai'
+  confidence Float?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([documentId, tagId])
+  @@index([tagId])
+  @@map("document_tags")
+}
+
+// Reuses the existing Phase C `Entity` model rather than a parallel entity
+// system (AGENTS Phase E §8).
+model DocumentEntity {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  entityId   String   @map("entity_id") @db.Uuid
+  entity     Entity   @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  role String? // e.g. 'subject' | 'mentioned' | 'client' | 'supplier'
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([documentId, entityId])
+  @@index([entityId])
+  @@map("document_entities")
+}
+
+model DocumentTable {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  sheetName  String? @map("sheet_name")
+  tableIndex Int     @map("table_index")
+  title      String?
+
+  columns     Json // [{ name, type }]
+  rowCount    Int  @map("row_count")
+  columnCount Int  @map("column_count")
+  metadata    Json?
+
+  rows DocumentTableRow[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([documentId])
+  @@map("document_tables")
+}
+
+// A real rows table (not one giant JSON blob) so a large spreadsheet stays
+// queryable/paginable (AGENTS Phase E §15) — the analytical query layer
+// (DocumentTableQueryService) reads a bounded page of rows, never "all rows
+// into the LLM".
+model DocumentTableRow {
+  id      String        @id @default(uuid()) @db.Uuid
+  tableId String        @map("table_id") @db.Uuid
+  table   DocumentTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  rowIndex Int  @map("row_index")
+  data     Json // { columnName: value }
+
+  @@index([tableId, rowIndex])
+  @@map("document_table_rows")
+}
+
+// ============================================================================
+// Phase E — Contacts / Identity
+// ============================================================================
+
+model Contact {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  company   String?
+  jobTitle  String? @map("job_title")
+
+  scope String
+  space String
+
+  relationship String?
+  trustLevel   String  @default("unknown") @map("trust_level") // unknown|known|trusted|vip|restricted|blocked
+
+  notes String?
+  tags  String[] @default([])
+
+  identities ContactIdentity[]
+
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  lastInteractionAt  DateTime? @map("last_interaction_at")
+
+  @@index([userId, scope, space])
+  @@map("contacts")
+}
+
+model ContactIdentity {
+  id        String  @id @default(uuid()) @db.Uuid
+  userId    String  @map("user_id") @db.Uuid
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactId String  @map("contact_id") @db.Uuid
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  type            String // 'whatsapp' | 'email'
+  valueNormalized String @map("value_normalized") // e.g. E.164 phone, lowercased email
+  displayValue    String @map("display_value")
+  verified        Boolean @default(false)
+  metadata        Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Per-user dedup: the same WhatsApp number/email can't be attached to two
+  // different contacts of the same user (AGENTS §22).
+  @@unique([userId, type, valueNormalized])
+  @@index([contactId])
+  @@map("contact_identities")
+}
+
+// ============================================================================
+// Phase E — WhatsApp (Mora's own number, never the user's personal WhatsApp)
+// ============================================================================
+
+model WhatsAppAccount {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label       String
+  phoneNumber String  @map("phone_number")
+  provider    String // 'evolution' | 'meta_cloud'
+
+  // AES-256-GCM, same pattern as AiProvider (SecretEncryptionService) —
+  // never stored/returned in plaintext.
+  credentialsEncrypted String? @map("credentials_encrypted")
+  credentialsIv        String? @map("credentials_iv")
+  credentialsAuthTag   String? @map("credentials_auth_tag")
+
+  status       String    @default("configured") // configured|connected|disconnected|error
+  lastSyncAt   DateTime? @map("last_sync_at")
+  lastError    String?   @map("last_error") // sanitized only — never a raw provider payload
+
+  autoReplyPolicy Json? @map("auto_reply_policy")
+
+  conversations WhatsAppConversation[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("whatsapp_accounts")
+}
+
+model WhatsAppConversation {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @map("account_id") @db.Uuid
+  account   WhatsAppAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contactId String?         @map("contact_id") @db.Uuid
+
+  scope String
+  space String
+
+  lastMessageAt DateTime? @map("last_message_at")
+
+  messages WhatsAppMessage[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([accountId])
+  @@index([contactId])
+  @@map("whatsapp_conversations")
+}
+
+model WhatsAppMessage {
+  id             String               @id @default(uuid()) @db.Uuid
+  conversationId String               @map("conversation_id") @db.Uuid
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  providerMessageId String @unique @map("provider_message_id") // dedup key (AGENTS §26)
+  direction         String // 'inbound' | 'outbound'
+  contactId         String? @map("contact_id") @db.Uuid
+
+  timestamp DateTime
+  status    String? // sent|delivered|read|failed, when the provider reports it
+  text      String?
+  metadata  Json?
+
+  attachments WhatsAppAttachment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@map("whatsapp_messages")
+}
+
+model WhatsAppAttachment {
+  id         String          @id @default(uuid()) @db.Uuid
+  messageId  String          @map("message_id") @db.Uuid
+  message    WhatsAppMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  documentId String?         @map("document_id") @db.Uuid
+
+  filename  String
+  mimeType  String  @map("mime_type")
+  sizeBytes Int?    @map("size_bytes")
+  storageKey String? @map("storage_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([messageId])
+  @@map("whatsapp_attachments")
+}
+
+// ============================================================================
+// Phase E — Email (Mora's own mailbox(es), never an implicit read of the
+// user's personal inbox)
+// ============================================================================
+
+model EmailAccount {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label    String
+  address  String
+  provider String // 'imap_smtp' | 'gmail' | 'microsoft_graph'
+
+  imapHost String? @map("imap_host")
+  imapPort Int?    @map("imap_port")
+  smtpHost String? @map("smtp_host")
+  smtpPort Int?    @map("smtp_port")
+
+  credentialsEncrypted String? @map("credentials_encrypted")
+  credentialsIv        String? @map("credentials_iv")
+  credentialsAuthTag   String? @map("credentials_auth_tag")
+
+  status     String    @default("configured")
+  lastSyncAt DateTime? @map("last_sync_at")
+  lastError  String?   @map("last_error")
+
+  threads EmailThread[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("email_accounts")
+}
+
+model EmailThread {
+  id        String       @id @default(uuid()) @db.Uuid
+  accountId String       @map("account_id") @db.Uuid
+  account   EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  subject   String?
+  scope     String
+  space     String
+  contactId String? @map("contact_id") @db.Uuid
+
+  lastMessageAt DateTime? @map("last_message_at")
+
+  messages EmailMessage[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([accountId])
+  @@map("email_threads")
+}
+
+model EmailMessage {
+  id       String      @id @default(uuid()) @db.Uuid
+  threadId String      @map("thread_id") @db.Uuid
+  thread   EmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  providerMessageId String  @unique @map("provider_message_id")
+  from              String
+  to                String[]
+  cc                String[] @default([])
+  subject           String?
+
+  textBody           String? @map("text_body")
+  htmlBodySanitized  String? @map("html_body_sanitized") // sanitized at ingest — never raw untrusted HTML (AGENTS §38)
+
+  direction  String // 'inbound' | 'outbound'
+  receivedAt DateTime? @map("received_at")
+  sentAt     DateTime? @map("sent_at")
+  contactId  String?   @map("contact_id") @db.Uuid
+
+  metadata Json?
+
+  attachments EmailAttachment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([threadId])
+  @@map("email_messages")
+}
+
+model EmailAttachment {
+  id         String       @id @default(uuid()) @db.Uuid
+  messageId  String       @map("message_id") @db.Uuid
+  message    EmailMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  documentId String?      @map("document_id") @db.Uuid
+
+  filename   String
+  mimeType   String  @map("mime_type")
+  sizeBytes  Int?    @map("size_bytes")
+  storageKey String? @map("storage_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([messageId])
+  @@map("email_attachments")
+}
+
+// ============================================================================
+// Phase E — Calendar (Mora's own internal calendar; Google/Microsoft are
+// architecture-ready interfaces, not implemented without real credentials)
+// ============================================================================
+
+model CalendarEvent {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope       String
+  space       String
+  title       String
+  description String?
+  location    String?
+
+  startsAt DateTime @map("starts_at")
+  endsAt   DateTime @map("ends_at")
+  timezone String // IANA, e.g. 'UTC' (TimeContextService.timezone) — never implicit
+
+  status         String  @default("confirmed") // confirmed|tentative|cancelled
+  recurrenceRule String? @map("recurrence_rule") // RFC 5545 RRULE, optional
+
+  source   String  @default("mora") // 'mora' | 'google' | 'microsoft'
+  sourceId String? @map("source_id")
+
+  participants CalendarEventParticipant[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, scope, space, startsAt])
+  @@map("calendar_events")
+}
+
+model CalendarEventParticipant {
+  id      String        @id @default(uuid()) @db.Uuid
+  eventId String        @map("event_id") @db.Uuid
+  event   CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  contactId String? @map("contact_id") @db.Uuid
+  name      String?
+  email     String?
+  status    String? // 'accepted' | 'declined' | 'tentative' | 'pending'
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([eventId])
+  @@map("calendar_event_participants")
 }
