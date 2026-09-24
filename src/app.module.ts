@@ -34,6 +34,7 @@ import { RouterModule } from './router/router.module.js';
 import { TasksModule } from './tasks/tasks.module.js';
 import { ToolsModule } from './tools/tools.module.js';
 import { UsersModule } from './users/users.module.js';
+import { VoiceModule } from './voice/voice.module.js';
 import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
 
 @Module({
@@ -96,6 +97,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
     PendingActionsModule,
     OrchestratorModule,
     MessagesModule,
+    VoiceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -734,13 +734,122 @@ learn beyond the tool names.
 
 ---
 
+## Voice (Phase F) — REAL-TIME VOICE ENGINE
+
+**Core principle: voice is a CHANNEL, not a new assistant.** A voice turn ends up calling the
+exact same Orchestrator/Router/Agents/Memory/Documents/Tools pipeline as a normal text message
+(`POST /messages`) — the frontend should think of voice purely as an alternate way to produce a
+`transcript.final` (equivalent to typing a message) and to receive the response as streamed
+audio instead of (or alongside) text.
+
+### REST endpoints
+
+- `POST /voice/sessions` — body `{ scope, space, conversationId?, language?, mode?, timezone? }`
+  (`language` defaults `"auto"`, `mode` defaults `"push_to_talk"`). Returns the created
+  `VoiceSession` (status `"created"`). Omit `conversationId` to start a new conversation — the
+  session's `conversationId` can then be reused by `POST /messages` to continue the same
+  conversation in text.
+- `GET /voice/sessions/:id` — 403 if the session belongs to another user.
+- `POST /voice/sessions/:id/end` — ends the session (idempotent).
+- `GET /voice/profiles` / `POST /voice/profiles` / `PATCH /voice/profiles/:id` — `MoraVoiceProfile`
+  CRUD: `{ name, provider, voiceId, language?, speed?, isDefault? }`. Never returns an API key —
+  voice profiles never carry credentials (those live exclusively on the backend's AI Provider
+  Manager).
+- `GET /voice/status` — `{ protocolVersion, audioFormat, sttConfigured, ttsConfigured, providers: { stt, tts } }`.
+  Use this to decide whether to show the mic button as available before opening a session.
+
+### WebSocket transport
+
+Connect to `wss://<host>/voice/ws?token=<accessToken>` (the same JWT access token used for REST
+calls, as a query parameter since browser WebSocket clients cannot set an `Authorization`
+header). The connection closes immediately with a 4xxx code if the token is missing/invalid
+(`4001`), the referenced session doesn't exist or isn't yours (`4003`), the session already has
+another active connection (`4005`), or the session exceeded its 2-hour max duration (`4004`).
+
+**One socket = one session = one user.** After connecting, send `session.start` referencing a
+session id created via the REST endpoint above; the server replies `session.ready` once
+listening begins.
+
+**Audio format** (both directions): PCM16 little-endian, mono, 16kHz. Send raw binary WebSocket
+frames (recommended ~200ms each, hard cap 32KB/frame). Outbound assistant audio (`audio.out.chunk`)
+is streamed as binary frames too, but is **MP3-encoded** (OpenAI TTS output), not PCM — play it
+with a standard `<audio>`/MediaSource pipeline, not a raw PCM player.
+
+**Protocol version**: `1` (`VOICE_PROTOCOL_VERSION`). Client and server both include it; a future
+breaking change bumps this and old clients should show an upgrade prompt rather than silently
+misbehaving.
+
+#### Client → Server events (JSON text frames unless noted)
+
+| Event | Payload | Notes |
+|---|---|---|
+| `session.start` | `{ sessionId }` | First message after connecting. |
+| *(binary frame)* | raw PCM16 | Sent continuously while the user is speaking. |
+| `audio.end` | — | Push-to-talk release — forces STT finalization even if VAD hasn't detected silence yet. |
+| `session.interrupt` | — | Barge-in: stop the assistant immediately. |
+| `session.pause` / `session.resume` | — | |
+| `session.end` | — | Closes the session. |
+
+#### Server → Client events
+
+| Event | Payload | Notes |
+|---|---|---|
+| `session.ready` | `{ sessionId, state, protocolVersion, audioFormat }` | |
+| `transcript.final` | `{ text }` | The ONLY transcript event Phase F emits — see below. |
+| `assistant.thinking.started` | — | Orchestrator call in flight. |
+| `assistant.speaking.started` / `assistant.speaking.ended` | — | Also the hook point future Phase H avatar lip-sync will attach to; no avatar logic exists yet. |
+| *(binary frame)* | MP3 bytes | Assistant audio, streamed sentence by sentence as it's synthesized. |
+| `action.pending_confirmation` | `{ pendingActionId, tool, securityLevel, summary }` | An N2/N3 tool call needs a spoken "oui"/"non" — same semantics as the text-chat `action` field. |
+| `action.executed` | `{ pendingActionId, toolName }` | |
+| `action.clarification_needed` | `{ candidateCount }` | More than one pending action is open in this session — the backend will NOT guess which "oui" refers to; ask the user which one, or point them to `GET /pending-actions`. |
+| `session.interrupted` | — | Confirms a barge-in was processed. |
+| `session.state_changed` | `{ state }` | Emitted for pause/resume. |
+| `session.ended` | — | |
+| `latency.metrics` | `{ sttLatencyMs, llmLatencyMs, ttsFirstByteMs, totalLatencyMs }` | Useful for an optional debug overlay. |
+| `error` | `{ code, message }` | Always sanitized — never a raw provider error or a stack trace. |
+
+**IMPORTANT — no partial transcripts in Phase F.** `transcript.partial` is reserved in the
+protocol type for a future streaming-capable STT provider, but the shipped OpenAI Whisper
+adapter is batch-only (`supportsPartialTranscripts: false`) — it produces one transcript per
+turn, sent as `transcript.final`. Do not build UI that waits for `transcript.partial` updates;
+show a "listening…"/waveform indicator instead until `transcript.final` arrives.
+
+**Confirmation via voice**: a bare "oui" is only ever bound to a `pendingActionId` that was
+raised in *that same session*. If two pending actions are open, the backend replies
+`action.clarification_needed` rather than approving/rejecting either — the frontend should
+surface both pending actions (e.g. via `GET /pending-actions`) and let the user pick, or ask them
+to say which one explicitly.
+
+### Test status (Phase F)
+
+- **OpenAI STT (Whisper) and OpenAI TTS**: REAL — verified with an actual API call each (real
+  French synthesized audio, correctly transcribed back) against a real OpenAI account, reusing
+  the same encrypted credentials already configured for chat/embedding (no new key required).
+- **VAD (energy/RMS-based)**: REAL, working implementation — not Silero/WebRTC VAD (documented
+  limitation, sufficient for the MVP; the real bottleneck is network latency, not VAD accuracy).
+- **WebSocket session lifecycle, auth, ownership, one-socket-per-session, audio flood guard**:
+  REAL, covered by automated e2e tests.
+- **Full audio-in → STT → Orchestrator → TTS → audio-out chained in one single automated test**:
+  NOT run end-to-end automatically in this environment (would require a real user's provider
+  credentials wired to a synthetic-audio e2e fixture); each stage was instead verified
+  independently (STT/TTS for real, Orchestrator reuse via the existing 116 Phase A-E e2e tests,
+  gateway wiring via new voice e2e tests). See the Phase F final report for full detail.
+- **Wake word**: NOT implemented as a real detector — `mode: "wake_word"` is accepted by the API
+  but currently resolves to an explicitly-labeled simulated/no-op detector
+  (`isRealAudioTested: false`). Use `push_to_talk` or `continuous_session` for now.
+- **Avatar**: not built (deferred to Phase H). `assistant.speaking.started`/`ended` events exist
+  and are safe to wire up now; `assistant.expression` is reserved but never emitted with real
+  content in Phase F.
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase E) for: audit entries, conversation rename/delete/title,
+No endpoint exists (as of Phase F) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
 endpoint, real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta
-Cloud WhatsApp provider, voice, avatar, n8n (Phase F+), a "reveal API key"/"reveal credentials"
-endpoint (doesn't exist — by design), vision/STT/TTS/image/avatar provider testing, and no
-N3/N4 tool of any kind (the security levels exist and are enforced, but neither phase ships a
-concrete tool at those levels). OCR is not implemented — a scanned/image-only PDF is marked
-`needs_review`, never silently indexed as empty.
+Cloud WhatsApp provider, avatar, n8n, a "reveal API key"/"reveal credentials"
+endpoint (doesn't exist — by design), vision/image/avatar provider testing, a real wake-word
+detector, and no N3/N4 tool of any kind (the security levels exist and are enforced, but no
+phase yet ships a concrete tool at those levels). OCR is not implemented — a scanned/image-only
+PDF is marked `needs_review`, never silently indexed as empty.

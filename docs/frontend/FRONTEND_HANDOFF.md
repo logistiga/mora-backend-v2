@@ -582,24 +582,83 @@ for `Document`, `DocumentDetail`, `DocumentTable`, `DocumentChunkCitation`, `Con
 - **WhatsApp/Email inbox-style screens** (Mora's own accounts), draft + confirmation-card
   send flow (§14).
 - **Connections settings overview** page (§14).
+- **Voice orb/mic button** with listening/thinking/speaking states and live latency debug
+  overlay (§16, once implemented — contracts are ready now, no frontend built yet).
 
-## 16. Explicitly NOT available yet (do not build UI for these)
+## 16. Phase F — Real-Time Voice UX (contract-ready, frontend NOT built yet)
+
+**Core principle for the UI**: voice is not a different assistant or a different conversation
+model — it's an alternate input/output modality for the exact same Mora. Design the voice
+screen as "the chat screen, but the microphone replaces the text box and audio replaces (or
+supplements) the assistant bubble," not as a separate product surface.
+
+### Suggested voice screen states (drive these off `VoiceSessionState` + local audio playback state)
+
+- **Idle / not connected** — a mic button, disabled until `GET /voice/status` reports at least
+  `sttConfigured: true` (no point offering voice if nothing is configured).
+- **Listening** — an animated waveform or pulsing orb reacting to input volume (client-side
+  visualization only, driven by the mic's own audio level — nothing from the server here beyond
+  `state: 'listening'`).
+- **User speaking → transcribing** — same waveform, and once `transcript.final` arrives, briefly
+  display it (e.g. as a chat bubble, exactly like a typed user message) before...
+- **Thinking** — a distinct "Mora réfléchit…" indicator from `assistant.thinking.started`.
+- **Speaking** — an orb/waveform for the assistant, active between `assistant.speaking.started`
+  and `assistant.speaking.ended`, playing the incoming binary MP3 chunks. Show a **visible stop
+  button** the whole time — clicking it sends `session.interrupt` (barge-in). The user should
+  also be able to simply start talking again (client detects mic input during
+  `assistant_speaking` and sends `session.interrupt` automatically, then starts a new turn) —
+  this is the "natural interruption" UX, not just a button.
+- **Pending confirmation** — reuse the exact same confirmation card component built for the
+  chat screen (§13) — same `pendingActionId`/`tool`/`securityLevel`/`summary` shape, just
+  triggered by `action.pending_confirmation` instead of a REST response's `action` field. Let
+  the user either speak "oui"/"non" OR tap approve/reject on the card (both call into the same
+  backend state — a spoken confirmation and a REST `POST /pending-actions/:id/approve` are
+  interchangeable).
+- **Clarification needed** — on `action.clarification_needed`, show a small list of the user's
+  currently open pending actions (`GET /pending-actions`) and let them pick one, rather than
+  trying to re-guess from more spoken input.
+- **Connection status** — a small always-visible indicator (connected/reconnecting/disconnected)
+  driven by the WebSocket's own `onopen`/`onclose`/`onerror`, plus a distinct message for each
+  documented close code (4001 unauthorized, 4003 session not found, 4004 expired, 4005 already
+  connected elsewhere).
+- **Provider status** — if `GET /voice/status` reports `ttsConfigured: false`, still allow
+  voice input but tell the user replies will be text-only (no audio) — don't hide the feature
+  entirely, since STT-only is still a valid, honestly-degraded mode.
+- **Latency debug (optional, dev-only toggle)** — `latency.metrics` gives
+  `sttLatencyMs`/`llmLatencyMs`/`ttsFirstByteMs`/`totalLatencyMs` per turn; a small collapsible
+  panel showing the last turn's numbers is useful during development, not intended for
+  end-users.
+
+### Explicitly deferred, do not build yet
+
+- Any 3D avatar, lip-sync, or facial expression rendering — `assistant.expression` exists in
+  the protocol as a hook for **Phase H** but is never emitted with real content in Phase F.
+  `assistant.speaking.started`/`ended` are safe to wire up now for a simple orb/waveform, not
+  for avatar animation.
+- A wake-word ("dis 'Mora'") always-listening mode — `mode: 'wake_word'` is accepted by the API
+  but has no real detector behind it yet (see `API_CONTRACT.md`). Build `push_to_talk` (press
+  and hold, or tap to start/stop) as the default, and `continuous_session` (mic stays open,
+  turn-taking driven entirely by server-side VAD) as a secondary option.
+- `LOVABLE_MASTER_PROMPT.md` — not generated yet, deferred to Phase H per the standing plan.
+
+## 17. Explicitly NOT available yet (do not build UI for these)
 
 Real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta Cloud
 WhatsApp provider (only Evolution API is implemented, and only at contract/mock-test level —
 see the Phase E final report), OCR/scanned-document text extraction (a scanned PDF is marked
 `needs_review`, never silently indexed as empty), a public document download/preview URL
 (`storageKey` is internal only), real LogistiGA/Piston database access (fixture/contract-level
-only in Phase E), voice, speech recognition, vision, 3D avatar, n8n, conversation
-titles/rename/delete, pagination, per-space permissions, a working cross-scope toggle,
-password reset, audit log UI, a memory delete button, a manual "supersede" action, POST/PATCH
-for profile-facts or entities, a "reveal API key"/"reveal credentials" feature (doesn't exist
-server-side, for any connector), vision/STT/TTS/image/avatar provider testing, real
-per-complexity/route model switching, any N3/N4-level tool (the security levels are enforced
-end-to-end but no phase ships a concrete tool at those levels), multi-step/chained tool calls
-in one turn (e.g. "complete my task called X" requires knowing the task's id — the LLM does
-not automatically look it up first), and any notification channel other than the in-app list
-(no email/push/WhatsApp delivery of a reminder yet).
+only in Phase E), a real wake-word ("dis 'Mora'") detector, a 3D avatar/lip-sync/facial
+expression UI, n8n, conversation titles/rename/delete, pagination, per-space permissions, a
+working cross-scope toggle, password reset, audit log UI, a memory delete button, a manual
+"supersede" action, POST/PATCH for profile-facts or entities, a "reveal API key"/"reveal
+credentials" feature (doesn't exist server-side, for any connector), vision/image provider
+testing, real per-complexity/route model switching, any N3/N4-level tool (the security levels
+are enforced end-to-end but no phase ships a concrete tool at those levels),
+multi-step/chained tool calls in one turn (e.g. "complete my task called X" requires knowing
+the task's id — the LLM does not automatically look it up first), `LOVABLE_MASTER_PROMPT.md`
+(deferred to Phase H), and any notification channel other than the in-app list (no email/push/
+WhatsApp delivery of a reminder yet).
 
 ---
 
