@@ -55,6 +55,8 @@ model User {
   whatsAppAccounts  WhatsAppAccount[]
   emailAccounts     EmailAccount[]
   calendarEvents    CalendarEvent[]
+  voiceSessions     VoiceSession[]
+  voiceProfiles     VoiceProfile[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1084,4 +1086,114 @@ model CalendarEventParticipant {
 
   @@index([eventId])
   @@map("calendar_event_participants")
+}
+
+// ============================================================================
+// Phase F — Real-Time Voice Engine
+//
+// Design decisions (AGENTS Phase F §3/§21/§38):
+// - Voice is a CHANNEL, not a new brain: `VoiceSession.conversationId`
+//   points at the exact same `Conversation` row text chat uses — a voice
+//   turn's final transcript goes through `MoraOrchestratorService.
+//   handleMessage()` unchanged, and the resulting `Message` rows are
+//   indistinguishable from text ones (same table, same isolation).
+// - No raw audio is ever stored in PostgreSQL (§3) — only text (transcript/
+//   response), timing, and metadata. Audio lives only in-memory for the
+//   duration of a turn (buffered chunks → one STT call) and is discarded
+//   immediately after.
+// - Only 3 tables (§38: "ne crée pas 15 tables inutiles") — `VoiceSession`
+//   (one per WebSocket connection's logical conversation), `VoiceTurn` (one
+//   per user-utterance → Mora-response cycle, with full latency
+//   breakdown), `VoiceProfile` (MoraVoiceProfile — TTS voice configuration,
+//   never a secret).
+// ============================================================================
+
+model VoiceSession {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId String @map("conversation_id") @db.Uuid
+
+  scope String
+  space String
+
+  status String @default("created") // created|listening|user_speaking|transcribing|thinking|assistant_speaking|interrupted|paused|ended|error
+
+  sttProvider String? @map("stt_provider") // e.g. 'openai' — resolved provider, not a secret
+  ttsProvider String? @map("tts_provider")
+
+  language String  @default("auto")
+  timezone String // explicit, reuses TimeContextService default — never implicit (AGENTS Phase D correction)
+
+  mode String @default("push_to_talk") // push_to_talk|wake_word|continuous_session
+
+  metadata Json?
+
+  turns VoiceTurn[]
+
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([conversationId])
+  @@map("voice_sessions")
+}
+
+// One row per user-utterance → Mora-response cycle. Never stores raw audio
+// (AGENTS §21) — `transcript`/`responseText` are the same text a text-chat
+// turn would have produced, plus a full latency breakdown for observability
+// (AGENTS §35).
+model VoiceTurn {
+  id        String       @id @default(uuid()) @db.Uuid
+  sessionId String       @map("session_id") @db.Uuid
+  session   VoiceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  transcript   String?
+  responseText String? @map("response_text")
+
+  interrupted Boolean @default(false)
+  status      String  @default("in_progress") // in_progress|completed|interrupted|failed
+
+  sttLatencyMs      Int? @map("stt_latency_ms")
+  llmLatencyMs      Int? @map("llm_latency_ms")
+  ttsFirstByteMs    Int? @map("tts_first_byte_ms")
+  totalLatencyMs    Int? @map("total_latency_ms")
+
+  pendingActionId String? @map("pending_action_id") @db.Uuid
+
+  errorCode String? @map("error_code")
+
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+
+  @@index([sessionId])
+  @@map("voice_turns")
+}
+
+// MoraVoiceProfile (AGENTS §15) — TTS voice configuration only, NEVER a
+// secret (the actual provider API key stays exclusively in `AiProvider`,
+// resolved via VoiceProviderResolverService — see its doc comment for the
+// same-OpenAI-account reuse strategy).
+model VoiceProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name     String
+  provider String // 'openai' today; 'elevenlabs'/'azure'/'google'/'piper' ready later
+  voiceId  String @map("voice_id") // provider-specific voice identifier, e.g. 'alloy'
+  language String @default("auto")
+  speed    Float  @default(1.0)
+
+  settings  Json? // provider-specific extras (style, pitch, etc.), never a secret
+  isDefault Boolean @default(false) @map("is_default")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@map("voice_profiles")
 }

@@ -567,6 +567,86 @@ interface EmailMessage {
   contactId: string | null;
 }
 
+// ---- Voice (Phase F) --------------------------------------------------------
+
+type VoiceSessionState =
+  | 'created' | 'listening' | 'user_speaking' | 'transcribing' | 'thinking'
+  | 'assistant_speaking' | 'interrupted' | 'paused' | 'ended' | 'error';
+
+type VoiceMode = 'push_to_talk' | 'wake_word' | 'continuous_session';
+type SupportedVoiceLanguage = 'auto' | 'fr' | 'en' | 'ar' | 'darija';
+
+interface VoiceSession {
+  id: string;
+  userId: string;
+  conversationId: string;
+  scope: 'personal' | 'professional';
+  space: string;
+  status: VoiceSessionState;
+  sttProvider: string | null;
+  ttsProvider: string | null;
+  language: string; // SupportedVoiceLanguage
+  timezone: string;
+  mode: VoiceMode;
+  startedAt: string;
+  endedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface VoiceTurn {
+  id: string;
+  sessionId: string;
+  transcript: string | null;
+  responseText: string | null;
+  interrupted: boolean;
+  status: 'in_progress' | 'completed' | 'interrupted' | 'failed';
+  sttLatencyMs: number | null;
+  llmLatencyMs: number | null;
+  ttsFirstByteMs: number | null;
+  totalLatencyMs: number | null;
+  pendingActionId: string | null;
+  errorCode: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+interface VoiceProfile {
+  id: string;
+  userId: string;
+  name: string;
+  provider: string;
+  voiceId: string;
+  language: string; // SupportedVoiceLanguage
+  speed: number;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+  // NEVER an apiKey field — same discipline as AiProvider.
+}
+
+interface VoiceStatus {
+  protocolVersion: number; // currently 1
+  audioFormat: { encoding: 'pcm16le'; sampleRateHz: 16000; channels: 1; recommendedChunkMs: 200 };
+  sttConfigured: boolean;
+  ttsConfigured: boolean;
+  providers: {
+    stt: { id: string; name: string; provider: string; model: string } | null;
+    tts: { id: string; name: string; provider: string; model: string } | null;
+  };
+}
+
+// WebSocket event envelope (see API_CONTRACT.md for the full event table)
+interface VoiceServerEvent<T = unknown> {
+  event:
+    | 'session.ready' | 'transcript.partial' | 'transcript.final'
+    | 'assistant.thinking.started' | 'assistant.speaking.started' | 'assistant.speaking.ended'
+    | 'assistant.expression' | 'action.pending_confirmation' | 'action.executed'
+    | 'action.clarification_needed' | 'session.state_changed' | 'session.interrupted'
+    | 'session.ended' | 'latency.metrics' | 'error';
+  data?: T;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -584,8 +664,12 @@ interface ApiError {
 - `metadata` fields are intentionally loose (`Record<string, unknown>`) — treat their
   contents as debug/optional-display info, never rely on a specific key being present in
   production UI logic beyond what's documented in `API_CONTRACT.md`.
-- There is no `WebSocket`/`SSE` response type yet — Phase B is REST-only, request/response.
-  Real-time transport is planned but not implemented (see `docs/ROADMAP.md`).
+- Phase F adds the first real-time transport: a native WebSocket at `/voice/ws` for the voice
+  channel only (see `VoiceServerEvent` above and `API_CONTRACT.md`). Every other endpoint
+  remains REST-only, request/response.
+- Phase F: `transcript.partial` exists in the `VoiceServerEvent` union for forward-compatibility
+  but is never actually emitted in Phase F (the shipped STT provider is batch-only) — don't
+  build UI logic that waits for it.
 - `AiProvider` has no `apiKey` field on the wire, ever — don't add one to a local type either;
   a form component should keep a plaintext key entirely in local component state and send it
   only in the `POST`/`PATCH` request body, never store it in app state/cache alongside the rest
