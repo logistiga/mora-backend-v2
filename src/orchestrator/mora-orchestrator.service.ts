@@ -19,6 +19,8 @@ export interface OrchestratorInput {
   user: AgentUser;
   message: string;
   conversationId?: string;
+  channel?: 'text' | 'voice';
+  recentInterruption?: boolean;
 }
 
 export interface OrchestratorConfirmationAction {
@@ -102,6 +104,8 @@ export class MoraOrchestratorService {
       input.message,
       decision,
       conversation.id,
+      input.channel ?? 'text',
+      input.recentInterruption ?? false,
     );
 
     const assistantMessage = await this.conversationsService.addMessage({
@@ -157,6 +161,8 @@ export class MoraOrchestratorService {
     message: string,
     decision: RouterDecisionResult,
     conversationId: string,
+    channel: 'text' | 'voice',
+    recentInterruption: boolean,
   ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
     if (decision.route === 'direct') {
       return { content: this.buildDirectReply(decision), metadata: { agent: 'direct' } };
@@ -181,8 +187,22 @@ export class MoraOrchestratorService {
     const scope = decision.route as ToolScope; // 'personal' | 'professional' only past this point
     const agentResponse =
       scope === 'personal'
-        ? await this.personalAgent.handle({ user, message, conversationId, routerDecision: decision })
-        : await this.professionalAgent.handle({ user, message, conversationId, routerDecision: decision });
+        ? await this.personalAgent.handle({
+            user,
+            message,
+            conversationId,
+            routerDecision: decision,
+            channel,
+            recentInterruption,
+          })
+        : await this.professionalAgent.handle({
+            user,
+            message,
+            conversationId,
+            routerDecision: decision,
+            channel,
+            recentInterruption,
+          });
 
     return this.resolveAgentResponse(user, message, decision, conversationId, scope, agentResponse);
   }

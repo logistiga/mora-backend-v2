@@ -20,6 +20,10 @@ const SYSTEM_PROMPT_PREFIX = (displayName: string, spaceLabel: string, timeConte
   `${timeContext} ` +
   TOOL_USAGE_RULES;
 
+const VOICE_INTERRUPTION_NOTE =
+  "Contexte voice : si l'utilisateur vient d'interrompre Mora et change de sujet, réponds directement à la nouvelle demande. " +
+  "Ne reprends pas, ne résume pas, et ne conclus pas la réponse interrompue sauf si l'utilisateur le demande explicitement.";
+
 @Injectable()
 export class ProfessionalAgentService {
   constructor(
@@ -37,7 +41,9 @@ export class ProfessionalAgentService {
       scope: 'professional',
       space: input.routerDecision.space,
       conversationId: input.conversationId,
-      systemPrompt: SYSTEM_PROMPT_PREFIX(input.user.displayName, spaceLabel, this.timeContext.describeNow()),
+      systemPrompt:
+        SYSTEM_PROMPT_PREFIX(input.user.displayName, spaceLabel, this.timeContext.describeNow()) +
+        (input.channel === 'voice' && input.recentInterruption ? ` ${VOICE_INTERRUPTION_NOTE}` : ''),
       latestUserMessage: input.message,
     });
 

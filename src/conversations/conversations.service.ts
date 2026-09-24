@@ -80,6 +80,25 @@ export class ConversationsService {
     return message;
   }
 
+  async markMessageInterrupted(messageId: string, metadata: Record<string, unknown> = {}): Promise<Message> {
+    const current = await this.prisma.message.findUniqueOrThrow({ where: { id: messageId } });
+    const currentMeta =
+      current.metadata && typeof current.metadata === 'object' && !Array.isArray(current.metadata)
+        ? (current.metadata as Record<string, unknown>)
+        : {};
+
+    return this.prisma.message.update({
+      where: { id: messageId },
+      data: {
+        metadata: {
+          ...currentMeta,
+          ...metadata,
+          interrupted: true,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
   /**
    * Returns prior turns of a conversation as LLM-ready messages, filtered to
    * `scope` (plus 'direct', which is scope-neutral small talk). This is the
@@ -103,7 +122,15 @@ export class ConversationsService {
 
     return messages
       .reverse()
-      .filter((message) => message.role !== MessageRole.SYSTEM)
+      .filter((message) => {
+        if (message.role === MessageRole.SYSTEM) return false;
+        const metadata =
+          message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+            ? (message.metadata as Record<string, unknown>)
+            : null;
+        if (message.role === MessageRole.ASSISTANT && metadata?.interrupted === true) return false;
+        return true;
+      })
       .map((message) => ({
         role: message.role === MessageRole.ASSISTANT ? 'assistant' : 'user',
         content: message.content,

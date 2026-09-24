@@ -32,4 +32,6 @@ export interface AgentInput {
   message: string;
   conversationId: string;
   routerDecision: RouterDecisionResult;
+  channel?: 'text' | 'voice';
+  recentInterruption?: boolean;
 }

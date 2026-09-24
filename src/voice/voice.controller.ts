@@ -7,6 +7,7 @@ import type { AuthenticatedUser } from '../auth/entities/token-payload.interface
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { CreateVoiceSessionDto } from './dto/create-voice-session.dto.js';
 import { CreateVoiceProfileDto, UpdateVoiceProfileDto } from './dto/voice-profile.dto.js';
+import { VoiceProviderResolverService } from './providers/voice-provider-resolver.service.js';
 import { VoiceProfileService } from './voice-profile.service.js';
 import { VoiceSessionService } from './voice-session.service.js';
 import { VOICE_AUDIO_FORMAT, VOICE_PROTOCOL_VERSION } from './voice.types.js';
@@ -20,6 +21,7 @@ export class VoiceController {
     private readonly sessionService: VoiceSessionService,
     private readonly profileService: VoiceProfileService,
     private readonly aiProviderService: AiProviderService,
+    private readonly voiceProviderResolver: VoiceProviderResolverService,
     private readonly timeContext: TimeContextService,
   ) {}
 
@@ -65,16 +67,33 @@ export class VoiceController {
     return this.profileService.update(user.id, id, dto);
   }
 
-  /** Reports STT/TTS provider configuration (no secrets) plus protocol/audio-format contract for the frontend. */
+  /**
+   * Reports STT/TTS provider configuration (no secrets) plus protocol/audio-
+   * format contract for the frontend. `sttConfigured`/`ttsConfigured`
+   * reflect what will ACTUALLY resolve at turn time — including
+   * VoiceProviderResolverService's fallback to the user's `chat` OpenAI
+   * credentials when no dedicated `stt`/`tts` AiProvider row exists. Fixed
+   * during Phase G validation: this previously delegated straight to
+   * AiProviderService.getStatus(), which only checks for dedicated
+   * kind='stt'/'tts' rows and so under-reported `false` for a user who only
+   * has a `chat` provider, even though the resolver's fallback made voice
+   * genuinely usable for them.
+   */
   @Get('status')
   async getStatus(@CurrentUser() user: AuthenticatedUser) {
     const providerStatus = await this.aiProviderService.getStatus(user.id);
     const defaults = providerStatus.defaults as Record<string, { id: string; name: string; provider: string; model: string } | null>;
+
+    const [sttConnection, ttsConnection] = await Promise.all([
+      this.voiceProviderResolver.resolve(user.id, 'stt'),
+      this.voiceProviderResolver.resolve(user.id, 'tts'),
+    ]);
+
     return {
       protocolVersion: VOICE_PROTOCOL_VERSION,
       audioFormat: VOICE_AUDIO_FORMAT,
-      sttConfigured: Boolean(providerStatus.sttConfigured),
-      ttsConfigured: Boolean(providerStatus.ttsConfigured),
+      sttConfigured: sttConnection !== null,
+      ttsConfigured: ttsConnection !== null,
       providers: { stt: defaults.stt ?? null, tts: defaults.tts ?? null },
     };
   }
