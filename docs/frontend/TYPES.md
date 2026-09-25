@@ -213,8 +213,16 @@ interface ProviderSettings {
   [key: string]: unknown;
 }
 
+type ProviderOwner = 'user' | 'system';
+/** Effective origin of the provider serving one kind for the current user. */
+type ProviderSource = 'user' | 'system' | 'none';
+
 interface AiProvider {
   id: string;
+  /** true = supplied by Mora, shared, ADMIN-managed, read-only for a standard
+   *  user (and then `keyHint` is always null). false = the user's own (BYOK). */
+  isSystem: boolean;
+  owner: ProviderOwner;
   name: string;
   provider: KnownProvider;
   kind: ProviderKind;
@@ -250,9 +258,11 @@ interface AiProviderStatus {
   ttsConfigured: boolean;
   imageConfigured: boolean;
   avatarConfigured: boolean;
+  /** Where the provider that will actually serve each kind comes from. */
+  sources: Record<string /* kind */, ProviderSource>;
   defaults: Record<
     string, // kind
-    { id: string; name: string; provider: string; model: string } | null
+    { id: string; name: string; provider: string; model: string; source: ProviderSource } | null
   >;
 }
 

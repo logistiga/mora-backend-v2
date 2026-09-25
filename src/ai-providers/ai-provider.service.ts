@@ -20,6 +20,12 @@ export interface TestResult {
   message: string;
 }
 
+/** Owner of an AiProvider row: a user id for a personal (BYOK) provider,
+ *  `null` for a SYSTEM provider shared by every user. */
+export type ProviderOwner = string | null;
+
+export type ProviderSource = 'user' | 'system' | 'none';
+
 @Injectable()
 export class AiProviderService {
   constructor(
@@ -29,16 +35,16 @@ export class AiProviderService {
     private readonly embeddingAdapters: EmbeddingAdapterRegistry,
   ) {}
 
-  async create(userId: string, dto: CreateAiProviderDto): Promise<AiProviderPublicView> {
+  async create(owner: ProviderOwner, dto: CreateAiProviderDto): Promise<AiProviderPublicView> {
     const encrypted = dto.apiKey ? this.secretEncryption.encryptSecret(dto.apiKey) : null;
 
     const created = await this.prisma.$transaction(async (tx) => {
       if (dto.isDefault) {
-        await this.unsetSiblingDefaults(tx, userId, dto.kind, dto.scope, dto.space);
+        await this.unsetSiblingDefaults(tx, owner, dto.kind, dto.scope, dto.space);
       }
       return tx.aiProvider.create({
         data: {
-          userId,
+          userId: owner,
           name: dto.name,
           provider: dto.provider,
           kind: dto.kind,
@@ -63,10 +69,28 @@ export class AiProviderService {
     return this.toPublicView(created);
   }
 
+  /** A user sees their own providers plus the SYSTEM ones (read-only, and
+   *  without the key hint — only an ADMIN gets that, via `listSystem`). */
   async list(userId: string, query: ListAiProvidersQueryDto): Promise<AiProviderPublicView[]> {
     const rows = await this.prisma.aiProvider.findMany({
       where: {
-        userId,
+        OR: [{ userId }, { userId: null }],
+        kind: query.kind,
+        scope: query.scope,
+        space: query.space,
+        isActive: query.isActive === undefined ? undefined : query.isActive === 'true',
+      },
+      orderBy: [{ isDefault: 'desc' }, { priority: 'desc' }, { updatedAt: 'desc' }],
+    });
+    // Personal providers first: they win at resolution time.
+    const sorted = [...rows].sort((a, b) => Number(a.userId === null) - Number(b.userId === null));
+    return sorted.map((row) => this.toPublicView(row, { redactSystemHint: true }));
+  }
+
+  async listSystem(query: ListAiProvidersQueryDto): Promise<AiProviderPublicView[]> {
+    const rows = await this.prisma.aiProvider.findMany({
+      where: {
+        userId: null,
         kind: query.kind,
         scope: query.scope,
         space: query.space,
@@ -77,13 +101,23 @@ export class AiProviderService {
     return rows.map((row) => this.toPublicView(row));
   }
 
+  /** Read access: a user's own row, or any SYSTEM row (read-only, hint redacted). */
   async get(userId: string, id: string): Promise<AiProviderPublicView> {
-    const row = await this.getOwnedRow(userId, id);
+    const row = await this.prisma.aiProvider.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('AI provider not found');
+    if (row.userId !== null && row.userId !== userId) {
+      throw new ForbiddenException('This AI provider does not belong to you');
+    }
+    return this.toPublicView(row, { redactSystemHint: true });
+  }
+
+  async getOne(owner: ProviderOwner, id: string): Promise<AiProviderPublicView> {
+    const row = await this.getOwnedRow(owner, id);
     return this.toPublicView(row);
   }
 
-  async update(userId: string, id: string, dto: UpdateAiProviderDto): Promise<AiProviderPublicView> {
-    const existing = await this.getOwnedRow(userId, id);
+  async update(owner: ProviderOwner, id: string, dto: UpdateAiProviderDto): Promise<AiProviderPublicView> {
+    const existing = await this.getOwnedRow(owner, id);
     const encrypted = dto.apiKey ? this.secretEncryption.encryptSecret(dto.apiKey) : null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -91,7 +125,7 @@ export class AiProviderService {
         const kind = existing.kind;
         const scope = dto.scope !== undefined ? dto.scope : existing.scope;
         const space = dto.space !== undefined ? dto.space : existing.space;
-        await this.unsetSiblingDefaults(tx, userId, kind, scope ?? undefined, space ?? undefined, id);
+        await this.unsetSiblingDefaults(tx, owner, kind, scope ?? undefined, space ?? undefined, id);
       }
       return tx.aiProvider.update({
         where: { id },
@@ -122,14 +156,14 @@ export class AiProviderService {
     return this.toPublicView(updated);
   }
 
-  async enable(userId: string, id: string): Promise<AiProviderPublicView> {
-    await this.getOwnedRow(userId, id);
+  async enable(owner: ProviderOwner, id: string): Promise<AiProviderPublicView> {
+    await this.getOwnedRow(owner, id);
     const row = await this.prisma.aiProvider.update({ where: { id }, data: { isActive: true } });
     return this.toPublicView(row);
   }
 
-  async disable(userId: string, id: string): Promise<AiProviderPublicView> {
-    await this.getOwnedRow(userId, id);
+  async disable(owner: ProviderOwner, id: string): Promise<AiProviderPublicView> {
+    await this.getOwnedRow(owner, id);
     // A disabled provider is never returned by getProviderForUseCase() — see
     // the `isActive: true` filter there. Disabling, not deleting, is the
     // preferred reversible action (see `delete()` doc comment below).
@@ -137,10 +171,10 @@ export class AiProviderService {
     return this.toPublicView(row);
   }
 
-  async setDefault(userId: string, id: string): Promise<AiProviderPublicView> {
-    const existing = await this.getOwnedRow(userId, id);
+  async setDefault(owner: ProviderOwner, id: string): Promise<AiProviderPublicView> {
+    const existing = await this.getOwnedRow(owner, id);
     const updated = await this.prisma.$transaction(async (tx) => {
-      await this.unsetSiblingDefaults(tx, userId, existing.kind, existing.scope ?? undefined, existing.space ?? undefined, id);
+      await this.unsetSiblingDefaults(tx, owner, existing.kind, existing.scope ?? undefined, existing.space ?? undefined, id);
       return tx.aiProvider.update({ where: { id }, data: { isDefault: true } });
     });
     return this.toPublicView(updated);
@@ -154,13 +188,13 @@ export class AiProviderService {
    * observability data. Prefer `disable()` for anything you might want to
    * reverse; use `delete()` only to actually remove a bad/test entry.
    */
-  async delete(userId: string, id: string): Promise<void> {
-    await this.getOwnedRow(userId, id);
+  async delete(owner: ProviderOwner, id: string): Promise<void> {
+    await this.getOwnedRow(owner, id);
     await this.prisma.aiProvider.delete({ where: { id } });
   }
 
-  async testConnection(userId: string, id: string): Promise<TestResult> {
-    const row = await this.getOwnedRow(userId, id);
+  async testConnection(owner: ProviderOwner, id: string): Promise<TestResult> {
+    const row = await this.getOwnedRow(owner, id);
     const connection = this.toConnection(row);
 
     let result: TestResult;
@@ -209,59 +243,73 @@ export class AiProviderService {
     return result;
   }
 
+  /** What the frontend needs to know: for each kind, whether a provider will
+   *  actually resolve for this user, and where it comes from — 'user' (BYOK),
+   *  'system' (provided by Mora) or 'none'. Never exposes key material. */
   async getStatus(userId: string): Promise<Record<string, unknown>> {
-    const rows = await this.prisma.aiProvider.findMany({ where: { userId, isActive: true } });
-    const byKind = (kind: string) => rows.filter((r) => r.kind === kind);
-    const defaultOf = (kind: string) => rows.find((r) => r.kind === kind && r.isDefault) ?? byKind(kind)[0];
+    const rows = await this.prisma.aiProvider.findMany({
+      where: { OR: [{ userId }, { userId: null }], isActive: true },
+    });
 
     const kinds = ['chat', 'embedding', 'vision', 'stt', 'tts', 'image', 'avatar'];
     const configured: Record<string, boolean> = {};
-    const defaults: Record<string, { id: string; name: string; provider: string; model: string } | null> = {};
+    const sources: Record<string, ProviderSource> = {};
+    const defaults: Record<
+      string,
+      { id: string; name: string; provider: string; model: string; source: ProviderSource } | null
+    > = {};
+
     for (const kind of kinds) {
-      configured[`${kind}Configured`] = byKind(kind).length > 0;
-      const def = defaultOf(kind);
-      defaults[kind] = def ? { id: def.id, name: def.name, provider: def.provider, model: def.model } : null;
+      const def = selectProviderRow(rows, userId, { kind });
+      const source: ProviderSource = def === null ? 'none' : def.userId === null ? 'system' : 'user';
+      configured[`${kind}Configured`] = def !== null;
+      sources[kind] = source;
+      defaults[kind] = def
+        ? { id: def.id, name: def.name, provider: def.provider, model: def.model, source }
+        : null;
     }
 
-    return { ...configured, defaults };
+    return { ...configured, sources, defaults };
   }
 
-  /** Core selection rule (also used by AiModelSelectorService): prefer an exact
-   *  scope+space match, then scope-only, then a global (scope=null,space=null)
-   *  provider; within a tier, prefer isDefault, then higher priority, then
-   *  oldest (stable ordering). Simple and documented, per AGENTS §11. */
+  /** Single resolution rule for every consumer (chat, embedding, vision, stt,
+   *  tts, avatar — they all go through here, directly or via
+   *  AiModelSelectorService).
+   *
+   *  Ownership first: the user's own (BYOK) providers are searched before the
+   *  SYSTEM ones, so a personal key always overrides the shared Mora key.
+   *  Within one ownership pool, specificity decides: exact scope+space, then
+   *  scope-only, then global (scope=null,space=null); and within a tier,
+   *  isDefault, then higher priority, then oldest (stable ordering).
+   *  Returns null when neither a USER nor a SYSTEM provider matches — the
+   *  caller must then degrade honestly ("provider not configured"). */
   async getProviderForUseCase(userId: string, params: SelectProviderParams): Promise<AiProvider | null> {
     const candidates = await this.prisma.aiProvider.findMany({
-      where: { userId, kind: params.kind, isActive: true },
+      where: { OR: [{ userId }, { userId: null }], kind: params.kind, isActive: true },
     });
-    if (candidates.length === 0) return null;
+    return selectProviderRow(candidates, userId, params);
+  }
 
-    const tiers = [
-      candidates.filter((c) => c.scope === (params.scope ?? null) && c.space === (params.space ?? null) && (params.scope || params.space)),
-      candidates.filter((c) => c.scope === (params.scope ?? null) && c.space === null && params.scope),
-      candidates.filter((c) => c.scope === null && c.space === null),
-    ];
-
-    for (const tier of tiers) {
-      if (tier.length === 0) continue;
-      tier.sort((a, b) => {
-        if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        return a.createdAt.getTime() - b.createdAt.getTime();
-      });
-      return tier[0];
-    }
-    return null;
+  /** Same resolution as `getProviderForUseCase`, plus where the row came from. */
+  async resolveProviderWithSource(
+    userId: string,
+    params: SelectProviderParams,
+  ): Promise<{ row: AiProvider | null; source: ProviderSource }> {
+    const row = await this.getProviderForUseCase(userId, params);
+    return { row, source: row === null ? 'none' : row.userId === null ? 'system' : 'user' };
   }
 
   async getDefaultProvider(userId: string, kind: string): Promise<AiProvider | null> {
-    return this.prisma.aiProvider.findFirst({
-      where: { userId, kind, isActive: true, isDefault: true },
-    });
+    return (
+      (await this.prisma.aiProvider.findFirst({ where: { userId, kind, isActive: true, isDefault: true } })) ??
+      (await this.prisma.aiProvider.findFirst({ where: { userId: null, kind, isActive: true, isDefault: true } }))
+    );
   }
 
   async getProvidersByKind(userId: string, kind: string): Promise<AiProvider[]> {
-    return this.prisma.aiProvider.findMany({ where: { userId, kind, isActive: true } });
+    return this.prisma.aiProvider.findMany({
+      where: { OR: [{ userId }, { userId: null }], kind, isActive: true },
+    });
   }
 
   /** Decrypts the row's key (if any) into an in-memory connection object — never persisted, never logged. */
@@ -288,16 +336,26 @@ export class AiProviderService {
     };
   }
 
-  private async getOwnedRow(userId: string, id: string): Promise<AiProvider> {
+  /** Write access. `owner === null` is the ADMIN/SYSTEM path (see
+   *  AiProviderSystemController): it only ever matches SYSTEM rows. A user id
+   *  only ever matches that user's own rows, so a standard user can never
+   *  update, disable, delete or test a SYSTEM provider through `/ai-providers`. */
+  private async getOwnedRow(owner: ProviderOwner, id: string): Promise<AiProvider> {
     const row = await this.prisma.aiProvider.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('AI provider not found');
-    if (row.userId !== userId) throw new ForbiddenException('This AI provider does not belong to you');
+    if (row.userId !== owner) {
+      throw new ForbiddenException(
+        owner === null
+          ? 'This AI provider is not a SYSTEM provider'
+          : 'This AI provider does not belong to you',
+      );
+    }
     return row;
   }
 
   private async unsetSiblingDefaults(
     tx: Prisma.TransactionClient,
-    userId: string,
+    owner: ProviderOwner,
     kind: string,
     scope: string | undefined,
     space: string | undefined,
@@ -305,7 +363,7 @@ export class AiProviderService {
   ): Promise<void> {
     await tx.aiProvider.updateMany({
       where: {
-        userId,
+        userId: owner,
         kind,
         scope: scope ?? null,
         space: space ?? null,
@@ -316,16 +374,24 @@ export class AiProviderService {
     });
   }
 
-  private toPublicView(row: AiProvider): AiProviderPublicView {
+  private toPublicView(
+    row: AiProvider,
+    options: { redactSystemHint?: boolean } = {},
+  ): AiProviderPublicView {
+    const isSystem = row.userId === null;
     return {
       id: row.id,
+      isSystem,
+      owner: isSystem ? 'system' : 'user',
       name: row.name,
       provider: row.provider,
       kind: row.kind,
       baseUrl: row.baseUrl,
       model: row.model,
       hasKey: Boolean(row.apiKeyEncrypted),
-      keyHint: row.apiKeyHint,
+      // A SYSTEM key belongs to Mora, not to the caller: even its last-4 hint
+      // is only returned on the ADMIN routes.
+      keyHint: isSystem && options.redactSystemHint ? null : row.apiKeyHint,
       isActive: row.isActive,
       isDefault: row.isDefault,
       scope: row.scope,
@@ -340,6 +406,44 @@ export class AiProviderService {
       updatedAt: row.updatedAt,
     };
   }
+}
+
+/** Pure form of the resolution rule (see `getProviderForUseCase`): USER rows
+ *  first, then SYSTEM rows; inside each pool, exact scope+space > scope-only >
+ *  global; inside a tier, isDefault > higher priority > oldest. */
+export function selectProviderRow(
+  rows: AiProvider[],
+  userId: string,
+  params: SelectProviderParams,
+): AiProvider | null {
+  const candidates = rows.filter((r) => r.kind === params.kind && r.isActive);
+  const pools = [
+    candidates.filter((c) => c.userId === userId),
+    candidates.filter((c) => c.userId === null),
+  ];
+
+  for (const pool of pools) {
+    const tiers = [
+      pool.filter(
+        (c) =>
+          c.scope === (params.scope ?? null) &&
+          c.space === (params.space ?? null) &&
+          (params.scope || params.space),
+      ),
+      pool.filter((c) => c.scope === (params.scope ?? null) && c.space === null && params.scope),
+      pool.filter((c) => c.scope === null && c.space === null),
+    ];
+    for (const tier of tiers) {
+      if (tier.length === 0) continue;
+      const sorted = [...tier].sort((a, b) => {
+        if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+        if (a.priority !== b.priority) return b.priority - a.priority;
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
+      return sorted[0];
+    }
+  }
+  return null;
 }
 
 /** Strips anything that could resemble a leaked secret/header from a provider error before storing/returning it. */

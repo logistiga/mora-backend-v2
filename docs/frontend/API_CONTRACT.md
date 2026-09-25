@@ -510,15 +510,33 @@ Every endpoint below is Bearer-authenticated and scoped to the caller's own `use
 endpoint accepts a client-supplied `userId`. **No response, ever, contains the API key** — only
 `hasKey` (boolean) and `keyHint` (last 4 characters).
 
+### SYSTEM vs USER providers
+
+A provider row is either:
+- **SYSTEM** (`isSystem: true`, `owner: "system"`) — supplied by Mora, shared by every user,
+  managed only by an `ADMIN` through `/api/v1/ai-providers/system/*`. Read-only for everyone
+  else, and its `keyHint` is `null` outside the admin routes.
+- **USER / BYOK** (`isSystem: false`, `owner: "user"`) — the caller's own provider, optional.
+
+Resolution for any call (chat, embedding, vision, stt, tts, avatar) is, in order:
+1. the caller's own matching active provider (exact `scope`+`space` → `scope` only → global),
+2. otherwise the matching active SYSTEM provider (same three tiers),
+3. otherwise "not configured" (the endpoint degrades honestly — it never invents an answer).
+
+So **a user never has to enter a key**: if Mora has a SYSTEM provider for that kind, it just
+works; a personal key, when present, always overrides it.
+
 ### `GET /api/v1/ai-providers`
 - **Query params** (optional): `kind` (`chat|embedding|vision|stt|tts|image|avatar|...`),
   `scope` (`personal|professional`), `space`, `isActive` (`"true"|"false"`).
-- **Success — 200**: array, ordered `isDefault` desc, then `priority` desc, then
-  `updatedAt` desc. See `AiProvider` shape below.
+- **Success — 200**: array containing the caller's own providers **plus the SYSTEM ones**
+  (`isSystem: true`, `keyHint: null`). Personal rows come first, then `isDefault` desc,
+  `priority` desc, `updatedAt` desc. See `AiProvider` shape below.
 - **Errors**: `401`.
 
 ### `GET /api/v1/ai-providers/:id`
-- **Success — 200**: one `AiProvider`. **Errors**: `401`, `403` (not yours), `404`.
+- **Success — 200**: one `AiProvider` — the caller's own, or a SYSTEM one (read-only,
+  `keyHint: null`). **Errors**: `401`, `403` (another user's provider), `404`.
 
 ### `POST /api/v1/ai-providers`
 - **Body**:
@@ -579,6 +597,7 @@ endpoint accepts a client-supplied `userId`. **No response, ever, contains the A
 - **Errors**: `401`, `403`, `404`.
 
 ### `GET /api/v1/ai-providers/status`
+- Reflects the **effective** resolution (USER → SYSTEM → none) for each kind.
 - **Success — 200**:
   ```json
   {
@@ -589,14 +608,44 @@ endpoint accepts a client-supplied `userId`. **No response, ever, contains the A
     "ttsConfigured": false,
     "imageConfigured": false,
     "avatarConfigured": false,
+    "sources": {
+      "chat": "user",
+      "embedding": "system",
+      "vision": "none", "stt": "none", "tts": "none", "image": "none", "avatar": "none"
+    },
     "defaults": {
-      "chat": { "id": "uuid", "name": "My OpenAI", "provider": "openai", "model": "gpt-4o-mini" },
-      "embedding": { "id": "uuid", "name": "My Embeddings", "provider": "openai", "model": "text-embedding-3-small" },
+      "chat": { "id": "uuid", "name": "My OpenAI", "provider": "openai", "model": "gpt-4o-mini", "source": "user" },
+      "embedding": { "id": "uuid", "name": "Mora Embeddings", "provider": "openai", "model": "text-embedding-3-small", "source": "system" },
       "vision": null, "stt": null, "tts": null, "image": null, "avatar": null
     }
   }
   ```
+  `sources[kind]` is `"user"` (the caller's BYOK provider), `"system"` (provided by Mora) or
+  `"none"`. `<kind>Configured` is `true` as soon as either source resolves.
 - **Errors**: `401`.
+
+---
+
+## AI Providers — SYSTEM routes (ADMIN only)
+
+Same request/response shapes as above, but they operate exclusively on SYSTEM rows
+(`user_id IS NULL`). Every route requires `role = ADMIN`; anyone else gets **`403`**
+(`{"message": "Insufficient role"}`). Returned rows always carry `isSystem: true` and, here
+only, a non-null `keyHint`.
+
+| Route | Behavior |
+|---|---|
+| `GET /api/v1/ai-providers/system` | List SYSTEM providers (same query params as the user list) |
+| `GET /api/v1/ai-providers/system/:id` | One SYSTEM provider |
+| `POST /api/v1/ai-providers/system` | Create — same body as `POST /ai-providers`; `apiKey` encrypted on receipt |
+| `PATCH /api/v1/ai-providers/system/:id` | Update / rotate the key |
+| `POST /api/v1/ai-providers/system/:id/enable` \| `/disable` | Toggle; a disabled SYSTEM provider stops resolving for every user |
+| `POST /api/v1/ai-providers/system/:id/set-default` | Default among SYSTEM rows of the same (kind, scope, space) |
+| `POST /api/v1/ai-providers/system/:id/test` | Real minimal call, same semantics as the user route |
+| `DELETE /api/v1/ai-providers/system/:id` | 204, hard delete |
+
+Passing a personal provider's id to any of these returns `403` (and vice-versa: a SYSTEM id on
+the user routes returns `403`), so the two spaces can never be confused.
 
 **`AiProvider` response shape** (every endpoint above except `/test` and `/status`):
 ```json

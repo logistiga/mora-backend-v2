@@ -58,6 +58,15 @@ If a UI idea conflicts with those files, follow the files and keep the UI honest
 4. AI settings
 - AI providers list/create/edit/test/enable/disable/set default/delete
 - provider status overview
+- No API key is ever required to onboard or to use the app. A provider with
+  `isSystem: true` is supplied by Mora ("Fourni par Mora"): read-only for a standard user,
+  never shows a key or key hint, and exposes no edit/test/disable/delete action.
+- A user provider (`isSystem: false`) is optional BYOK and overrides the SYSTEM one for
+  that user. `GET /ai-providers/status` returns `sources[kind]` = `user | system | none`;
+  only `none` means the capability is unavailable.
+- ADMIN users additionally get a SYSTEM provider management screen backed by
+  `/api/v1/ai-providers/system/*`; non-admins must never see it (the API returns 403).
+- Never display or pre-fill an existing API key anywhere.
 
 5. Productivity
 - tasks

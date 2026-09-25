@@ -306,6 +306,22 @@ The backend now supports a "Paramètres → IA & API" settings page: multiple AI
 scoped to a usage kind (chat, embedding, and — reserved for later — vision/stt/tts/image/
 avatar), with encrypted keys and a real test-connection call.
 
+### SYSTEM providers vs BYOK (read this first)
+- Mora can supply **SYSTEM providers** (`isSystem: true`, `owner: "system"`): shared,
+  centrally-managed credentials stored encrypted in the same table with no owner. **A user
+  therefore never has to enter an API key to use Mora** — chat, embedding, vision and voice
+  work out of the box whenever a SYSTEM provider exists for that kind.
+- A user may still add their own provider (**BYOK**, `isSystem: false`). It is optional and it
+  always **overrides** the SYSTEM one: resolution is *user provider → system provider → not
+  configured*, ownership being checked before scope/space specificity.
+- For a standard user, SYSTEM rows are **read-only**: they appear in `GET /ai-providers` with
+  `keyHint: null`, and any write (`PATCH`, `enable`/`disable`, `set-default`, `test`, `DELETE`)
+  on them returns `403`. Hide those actions when `isSystem === true` and the user isn't ADMIN.
+- An **ADMIN** manages them through the dedicated routes `/api/v1/ai-providers/system/*`
+  (same shapes; `403` for everyone else). Build that screen only behind an admin role check.
+- `GET /ai-providers/status` tells you which one is actually in play per kind:
+  `sources[kind]` ∈ `user | system | none`, and `defaults[kind].source` likewise.
+
 ### What the backend actually does
 - A provider is a row the user creates: a display `name`, a `provider` string (openai,
   anthropic, groq, deepseek, gemini, mistral, openrouter, ollama,
@@ -334,6 +350,8 @@ avatar), with encrypted keys and a real test-connection call.
 - **Provider list**: grouped by `kind` (tabs or sections: Chat, Embedding, ...), each row
   showing `name`, `provider`, `model`, a scope/space badge (or "Global" if both null), an
   active/inactive toggle, a "Default" indicator, and `keyHint` (e.g. "Clé : ••••7890").
+  SYSTEM rows (`isSystem: true`) get a "Fourni par Mora" badge, no key hint, and no action
+  buttons for a non-admin — with a hint that adding a personal key will override it.
 - **Create/edit form**: name, provider (free-text or a dropdown of the known values with a
   "custom" option), kind, model, base URL (optional), API key (optional — a password-style
   input, write-only: never pre-filled on edit, only ever sent when the user wants to rotate it),
@@ -346,16 +364,18 @@ avatar), with encrypted keys and a real test-connection call.
 - **Delete**: `DELETE /:id` — since this is a real hard delete, a confirmation dialog is
   warranted (unlike Memory's archive, which is reversible).
 - **Status/overview widget** (e.g. at the top of the "IA & API" page, or in a general Settings
-  overview): `GET /ai-providers/status` → render each kind's configured/not state and its
+  overview): `GET /ai-providers/status` → render each kind's configured/not state, its
+  source (`user` = "votre clé", `system` = "fourni par Mora", `none` = non configuré), and its
   current default (name/provider/model) — good for an at-a-glance "Chat: ✅ OpenAI (gpt-4o-mini)
   · Embedding: ❌ not configured" summary.
 
 ### Loading / empty / error states
 - **Loading**: standard list/form skeletons; the test-connection button should show its own
   inline spinner (it makes a real network call to the provider and can take a few seconds).
-- **Empty**: a new user has zero providers — the whole app still works (Direct routing, and
-  graceful "not configured" replies elsewhere), so this is a normal state, not an error. Show a
-  prompt to add a first provider, not a blocking error.
+- **Empty**: a new user has zero *personal* providers — that is the normal state, not an error,
+  and not a blocker at onboarding: never force a key entry. If `sources[kind]` is `system`,
+  show "Fourni par Mora" with an optional "utiliser ma propre clé" action; only when it is
+  `none` should the UI say the capability is unavailable.
 - **Error**: `400` (validation — e.g. invalid `baseUrl`, empty `model`), `401` (session
   expired), `403`/`404` (not this user's provider, or unknown id). A failed `/test` call is
   **not** an HTTP error — it's a `200`/`201` with `{ success: false, message }`; render that

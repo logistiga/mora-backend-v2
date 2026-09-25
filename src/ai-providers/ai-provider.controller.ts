@@ -8,6 +8,13 @@ import { CreateAiProviderDto } from './dto/create-ai-provider.dto.js';
 import { ListAiProvidersQueryDto } from './dto/list-ai-providers.dto.js';
 import { UpdateAiProviderDto } from './dto/update-ai-provider.dto.js';
 
+/**
+ * Personal (BYOK) providers. Reads also surface the SYSTEM providers supplied
+ * by Mora (`isSystem: true`, key hint redacted) so the frontend can show them
+ * read-only; every write here is scoped to the caller's own rows, so a SYSTEM
+ * provider can never be updated, disabled, deleted or tested from this
+ * controller — that is AiProviderSystemController (ADMIN only).
+ */
 @ApiTags('ai-providers')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)

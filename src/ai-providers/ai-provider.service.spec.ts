@@ -288,6 +288,191 @@ describe('AiProviderService', () => {
         expect.objectContaining({ where: expect.objectContaining({ kind: 'embedding' }) }),
       );
     });
+
+    describe('SYSTEM fallback', () => {
+      const systemGlobal = { ...global, id: 'sys-global', userId: null };
+      const systemExact = { ...exact, id: 'sys-exact', userId: null };
+
+      it('loads the user rows and the system rows in one query', async () => {
+        await ctx.service.getProviderForUseCase('u1', { kind: 'chat' });
+        expect(ctx.prismaMock.aiProvider.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ OR: [{ userId: 'u1' }, { userId: null }] }),
+          }),
+        );
+      });
+
+      it('uses the SYSTEM provider when the user has none', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([systemGlobal] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', { kind: 'chat' });
+        expect(result?.id).toBe('sys-global');
+      });
+
+      it('prefers the USER provider over the SYSTEM one', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([systemGlobal, global] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', { kind: 'chat' });
+        expect(result?.id).toBe('global');
+      });
+
+      it('prefers a less specific USER provider over a more specific SYSTEM one', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([systemExact, global] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', {
+          kind: 'chat',
+          scope: 'professional',
+          space: 'logistiga',
+        });
+        expect(result?.id).toBe('global');
+      });
+
+      it('applies scope/space specificity inside the SYSTEM pool', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([systemGlobal, systemExact] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', {
+          kind: 'chat',
+          scope: 'professional',
+          space: 'logistiga',
+        });
+        expect(result?.id).toBe('sys-exact');
+      });
+
+      it('never returns a disabled SYSTEM provider', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([
+          { ...systemGlobal, isActive: false },
+        ] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', { kind: 'chat' });
+        expect(result).toBeNull();
+      });
+
+      it('never returns another user\'s provider', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([
+          { ...global, id: 'other', userId: 'u2' },
+        ] as never);
+        const result = await ctx.service.getProviderForUseCase('u1', { kind: 'chat' });
+        expect(result).toBeNull();
+      });
+
+      it('reports the effective source', async () => {
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([systemGlobal] as never);
+        await expect(ctx.service.resolveProviderWithSource('u1', { kind: 'chat' })).resolves.toMatchObject({
+          source: 'system',
+        });
+
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([global] as never);
+        await expect(ctx.service.resolveProviderWithSource('u1', { kind: 'chat' })).resolves.toMatchObject({
+          source: 'user',
+        });
+
+        ctx.prismaMock.aiProvider.findMany.mockResolvedValue([] as never);
+        await expect(ctx.service.resolveProviderWithSource('u1', { kind: 'chat' })).resolves.toMatchObject({
+          row: null,
+          source: 'none',
+        });
+      });
+    });
+  });
+
+  describe('getStatus', () => {
+    const now = new Date();
+    const row = (over: Record<string, unknown>) => ({
+      id: 'x',
+      userId: 'u1',
+      name: 'n',
+      provider: 'openai',
+      kind: 'chat',
+      model: 'gpt-4o-mini',
+      scope: null,
+      space: null,
+      isActive: true,
+      isDefault: false,
+      priority: 0,
+      createdAt: now,
+      ...over,
+    });
+
+    it('reports source=none when nothing is configured', async () => {
+      ctx.prismaMock.aiProvider.findMany.mockResolvedValue([] as never);
+      const status = (await ctx.service.getStatus('u1')) as Record<string, never>;
+      expect(status.chatConfigured).toBe(false);
+      expect(status.sources).toMatchObject({ chat: 'none', embedding: 'none' });
+      expect(status.defaults).toMatchObject({ chat: null });
+    });
+
+    it('reports source=system when only a SYSTEM provider exists', async () => {
+      ctx.prismaMock.aiProvider.findMany.mockResolvedValue([
+        row({ id: 'sys', userId: null }),
+        row({ id: 'sys-emb', userId: null, kind: 'embedding', model: 'text-embedding-3-small' }),
+      ] as never);
+      const status = (await ctx.service.getStatus('u1')) as Record<string, never>;
+      expect(status.chatConfigured).toBe(true);
+      expect(status.embeddingConfigured).toBe(true);
+      expect(status.sources).toMatchObject({ chat: 'system', embedding: 'system', vision: 'none' });
+      expect(status.defaults).toMatchObject({ chat: { id: 'sys', source: 'system' } });
+    });
+
+    it('reports source=user when the user has their own provider (BYOK)', async () => {
+      ctx.prismaMock.aiProvider.findMany.mockResolvedValue([
+        row({ id: 'sys', userId: null }),
+        row({ id: 'mine', userId: 'u1' }),
+      ] as never);
+      const status = (await ctx.service.getStatus('u1')) as Record<string, never>;
+      expect(status.sources).toMatchObject({ chat: 'user' });
+      expect(status.defaults).toMatchObject({ chat: { id: 'mine', source: 'user' } });
+    });
+  });
+
+  describe('SYSTEM providers ownership', () => {
+    it('a user cannot update a SYSTEM provider through the user path', async () => {
+      ctx.prismaMock.aiProvider.findUnique.mockResolvedValue({ id: 'sys', userId: null, kind: 'chat' } as never);
+      await expect(ctx.service.update('u1', 'sys', { name: 'hack' })).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('a user cannot disable, delete or test a SYSTEM provider', async () => {
+      ctx.prismaMock.aiProvider.findUnique.mockResolvedValue({ id: 'sys', userId: null, kind: 'chat' } as never);
+      await expect(ctx.service.disable('u1', 'sys')).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(ctx.service.delete('u1', 'sys')).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(ctx.service.testConnection('u1', 'sys')).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('the ADMIN path (owner=null) refuses to touch a personal provider', async () => {
+      ctx.prismaMock.aiProvider.findUnique.mockResolvedValue({ id: 'p1', userId: 'u1', kind: 'chat' } as never);
+      await expect(ctx.service.delete(null, 'p1')).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('creates a SYSTEM row with a null owner', async () => {
+      ctx.txMock.aiProvider.create.mockResolvedValue({ id: 'sys', userId: null } as never);
+      const created = await ctx.service.create(null, baseDto);
+      expect(ctx.txMock.aiProvider.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ userId: null }) }),
+      );
+      expect(created.isSystem).toBe(true);
+      expect(created.owner).toBe('system');
+    });
+
+    it('hides the SYSTEM key hint from a standard user but keeps it for ADMIN reads', async () => {
+      ctx.prismaMock.aiProvider.findUnique.mockResolvedValue({
+        id: 'sys',
+        userId: null,
+        apiKeyEncrypted: 'enc',
+        apiKeyHint: '7890',
+      } as never);
+
+      const asUser = await ctx.service.get('u1', 'sys');
+      expect(asUser.isSystem).toBe(true);
+      expect(asUser.hasKey).toBe(true);
+      expect(asUser.keyHint).toBeNull();
+
+      const asAdmin = await ctx.service.getOne(null, 'sys');
+      expect(asAdmin.keyHint).toBe('7890');
+    });
+
+    it('lists the SYSTEM providers alongside the user\'s own, personal first', async () => {
+      ctx.prismaMock.aiProvider.findMany.mockResolvedValue([
+        { id: 'sys', userId: null },
+        { id: 'mine', userId: 'u1' },
+      ] as never);
+      const rows = await ctx.service.list('u1', {});
+      expect(rows.map((r) => r.id)).toEqual(['mine', 'sys']);
+      expect(rows.map((r) => r.isSystem)).toEqual([false, true]);
+    });
   });
 
   describe('toConnection', () => {
