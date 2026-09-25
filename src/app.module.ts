@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ValidationPipe } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { AgentsModule } from './agents/agents.module.js';
 import { AiProvidersModule } from './ai-providers/ai-providers.module.js';
 import { AuditModule } from './audit/audit.module.js';
@@ -47,6 +49,16 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
         return {
           pinoHttp: {
             level: env === 'production' ? 'info' : 'debug',
+            // Every request gets a stable id, echoed back as x-request-id and
+            // repeated in error responses so a user-reported bug maps to the
+            // exact log lines of that request.
+            genReqId: (req: IncomingMessage, res: ServerResponse) => {
+              const header = req.headers['x-request-id'];
+              const requestId =
+                (Array.isArray(header) ? header[0] : header) || randomUUID();
+              res.setHeader('x-request-id', requestId);
+              return requestId;
+            },
             transport:
               env !== 'production'
                 ? { target: 'pino-pretty', options: { singleLine: true } }

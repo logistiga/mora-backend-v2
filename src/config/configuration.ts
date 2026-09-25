@@ -3,6 +3,7 @@ export interface AppConfig {
   port: number;
   apiPrefix: string;
   corsOrigin: string;
+  swaggerEnabled: boolean;
   database: {
     url: string;
   };
@@ -66,6 +67,12 @@ export default (): { app: AppConfig } => ({
     port: parseInt(process.env.PORT ?? '3000', 10),
     apiPrefix: process.env.API_PREFIX ?? 'api/v1',
     corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    // Swagger is served outside production by default; staging runs with
+    // NODE_ENV=production (real logger/build shape) and opts back in here.
+    swaggerEnabled:
+      process.env.MORA_SWAGGER_ENABLED === 'true' ||
+      (process.env.MORA_SWAGGER_ENABLED !== 'false' &&
+        (process.env.NODE_ENV ?? 'development') !== 'production'),
     database: {
       url: process.env.DATABASE_URL ?? '',
     },
