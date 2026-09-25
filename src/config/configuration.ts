@@ -4,6 +4,7 @@ export interface AppConfig {
   apiPrefix: string;
   corsOrigin: string;
   allowedOrigins: string[];
+  swaggerEnabled: boolean;
   buildVersion?: string;
   gitCommit?: string;
   database: {
@@ -73,6 +74,10 @@ export default (): { app: AppConfig } => ({
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
+    swaggerEnabled:
+      process.env.MORA_SWAGGER_ENABLED === 'true' ||
+      (process.env.MORA_SWAGGER_ENABLED !== 'false' &&
+        (process.env.NODE_ENV ?? 'development') !== 'production'),
     buildVersion: process.env.MORA_BUILD_VERSION || undefined,
     gitCommit: process.env.MORA_GIT_COMMIT || undefined,
     database: {

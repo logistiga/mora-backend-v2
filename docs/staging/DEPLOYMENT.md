@@ -90,3 +90,24 @@ Never publish:
 - JWT secrets
 - DB credentials
 - Redis credentials
+
+## Concrete stack (logistiga VPS)
+
+`docker-compose.staging.yml` implements the rules above against the host's existing
+Traefik (`coolify-proxy`, external `coolify` network). Host: `mora-v2-staging.logistiga.tech`.
+
+```bash
+cp .env.staging.example .env.staging     # fill in real secrets, chmod 600
+docker compose -p mora-v2-staging -f docker-compose.staging.yml --env-file .env.staging up -d --build
+docker compose -p mora-v2-staging -f docker-compose.staging.yml --env-file .env.staging \
+  --profile migrate run --rm migrate      # prisma migrate deploy
+```
+
+- containers: `mora-v2-staging-api` / `-postgres` (pgvector pg16) / `-redis`
+- network: `mora-v2-staging-internal` (+ `coolify` for the API only)
+- volumes: `mora-v2-staging-postgres-data`, `-redis-data`, `-documents-data`
+- no published host port; TLS and WSS terminate at Traefik (`letsencrypt` resolver)
+- `POSTGRES_HOST`/`REDIS_HOST` use the full container names: on the shared `coolify`
+  network the bare names `postgres`/`redis` resolve to other stacks' containers
+- `MORA_SWAGGER_ENABLED=true` keeps `/docs` available although `NODE_ENV=production`
+- an origin in `MORA_ALLOWED_ORIGINS` containing `*` matches one subdomain label

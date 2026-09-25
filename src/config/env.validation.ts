@@ -45,6 +45,10 @@ export class EnvironmentVariables {
   MORA_APP_ENV?: string;
 
   @IsOptional()
+  @IsIn(['true', 'false'])
+  MORA_SWAGGER_ENABLED?: string;
+
+  @IsOptional()
   @IsString()
   MORA_BUILD_VERSION?: string;
 
