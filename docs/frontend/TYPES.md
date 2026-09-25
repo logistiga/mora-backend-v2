@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
+> # Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -647,6 +647,62 @@ interface VoiceServerEvent<T = unknown> {
   data?: T;
 }
 
+// ---- Vision / Multimodal (Phase G) -----------------------------------------
+
+type VisionSourceType = 'upload' | 'camera' | 'screenshot' | 'voice_snapshot' | 'document';
+
+interface VisionAsset {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  scope: 'personal' | 'professional';
+  space: string;
+  sourceType: VisionSourceType;
+  originalFilename: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  extension: '.png' | '.jpg' | '.webp';
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  status: 'ready' | 'analyzed' | 'failed' | 'archived';
+  summary: string | null;
+  extractedText: string | null;
+  analysis: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  analyzedAt: string | null;
+  // NEVER present: storageKey, storageProvider, checksum.
+}
+
+interface VisionStatus {
+  visionConfigured: boolean;
+  provider: { provider: string; model: string; kind: string } | null;
+  supportedMimeTypes: Array<'image/png' | 'image/jpeg' | 'image/webp'>;
+  maxFiles: number;
+  maxUploadBytes: number;
+  features: {
+    ocr: boolean;
+    multimodalConversation: boolean;
+    cameraSnapshot: boolean;
+    screenshot: boolean;
+  };
+}
+
+interface VisionAnalyzeResponse extends MessageResponse {
+  userMessageId: string;
+  assets: Array<{
+    id: string;
+    sourceType: VisionSourceType;
+    originalFilename: string;
+    summary: string;
+    extractedText: string;
+    structuredData: Record<string, unknown> | null;
+    width: number | null;
+    height: number | null;
+  }>;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -665,8 +721,9 @@ interface ApiError {
   contents as debug/optional-display info, never rely on a specific key being present in
   production UI logic beyond what's documented in `API_CONTRACT.md`.
 - Phase F adds the first real-time transport: a native WebSocket at `/voice/ws` for the voice
-  channel only (see `VoiceServerEvent` above and `API_CONTRACT.md`). Every other endpoint
-  remains REST-only, request/response.
+  channel only (see `VoiceServerEvent` above and `API_CONTRACT.md`). Phase G adds a multimodal
+  REST channel at `/vision/*` for image-based turns. Every other endpoint remains REST-only,
+  request/response.
 - Phase F: `transcript.partial` exists in the `VoiceServerEvent` union for forward-compatibility
   but is never actually emitted in Phase F (the shipped STT provider is batch-only) — don't
   build UI logic that waits for it.
@@ -681,7 +738,8 @@ interface ApiError {
   `POST /pending-actions/:id/approve` or `/reject` before anything happens. The same rule
   applies to every Phase E N2 tool (`create_contact`, `calendar_create_event`,
   `whatsapp_send_message`, `email_send`, etc.).
-- Phase E: `Document.storageKey`/`storageProvider` are internal — never construct a download
-  URL from them client-side; there is no public file-serving endpoint yet (out of scope, see
-  "Endpoints NOT yet available"). `WhatsAppAccount`/`EmailAccount` never expose credentials on
-  the wire, the same discipline as `AiProvider`.
+- Phase E / G: `Document.storageKey`/`storageProvider` and `VisionAsset` storage internals are
+  backend-only — never construct a download URL from them client-side; there is no public
+  file-serving endpoint yet (out of scope, see "Endpoints NOT yet available").
+  `WhatsAppAccount`/`EmailAccount` never expose credentials on the wire, the same discipline as
+  `AiProvider`.

@@ -641,12 +641,94 @@ supplements) the assistant bubble," not as a separate product surface.
   turn-taking driven entirely by server-side VAD) as a secondary option.
 - `LOVABLE_MASTER_PROMPT.md` — not generated yet, deferred to Phase H per the standing plan.
 
-## 17. Explicitly NOT available yet (do not build UI for these)
+## 17. Phase G — Vision / Multimodal UX (contract-ready, frontend NOT built yet)
+
+**Core principle for the UI**: vision is not a separate assistant, not a separate memory lane,
+and not a separate conversation model. It is one more input channel into the same Mora
+conversation. The right mental model is "chat + attached visual context", whether the image
+comes from an upload, a camera snapshot, a screenshot, or later a voice-triggered snapshot.
+
+### What the backend actually does
+
+- `POST /vision/analyze` accepts multipart images (`files`) plus a required `message`, `scope`,
+  and `space`, and optionally `conversationId` + `sourceType`.
+- The backend validates the image bytes server-side (PNG/JPEG/WEBP only), enforces max file
+  size/count/dimensions, sanitizes the filename, stores the asset safely, then analyzes it
+  through a provider-neutral vision adapter.
+- The resulting visual summary/OCR/structured data is injected into the **existing**
+  Orchestrator/Router/Agents flow through `externalContextNotes`, with `channel: "vision"`.
+- The backend persists a bounded `visionContextSummary` on the originating user message so later
+  turns in the same conversation can reuse that image context without blindly re-uploading or
+  re-sending every old image.
+- Scope/space isolation remains strict. A screenshot sent in `professional/logistiga` stays in
+  that space; a personal image never unlocks professional context.
+- Visual prompt injection is treated exactly like document prompt injection: text seen inside an
+  image is untrusted data, never a privileged instruction.
+
+### Frontend should build
+
+- A **Vision composer** that can:
+  - upload one or more images,
+  - capture a camera snapshot,
+  - attach a manual screenshot,
+  - optionally continue an existing conversation by passing `conversationId`.
+- A small **capability preflight** before enabling the UI:
+  `GET /vision/status?scope=...&space=...`.
+  If `visionConfigured === false`, keep the UI visible but clearly degraded/disabled rather than
+  pretending the feature does not exist.
+- Reuse the normal Mora conversation screen:
+  - send the user question + images,
+  - append Mora's answer as an ordinary assistant message,
+  - keep using the returned `conversationId` for follow-up turns, including plain text turns.
+- Treat `sourceType` as UX metadata, not business logic:
+  `upload`, `camera`, `screenshot`, `voice_snapshot`, `document`.
+- For a future Voice + Vision surface, the frontend can capture a snapshot and call
+  `/vision/analyze` with `sourceType: "voice_snapshot"`, then let the existing voice layer read
+  the returned answer aloud. Do **not** invent a parallel voice-vision backend.
+
+### Suggested client flow (React / TanStack style)
+
+1. `useQuery(['vision-status', scope, space], ...)` before enabling the action.
+2. Build a `FormData` payload with repeated `files` entries plus `message`, `scope`, `space`,
+   optional `conversationId`, optional `sourceType`.
+3. `useMutation` for `POST /vision/analyze`.
+4. On success:
+   - reuse `conversationId`,
+   - render the assistant reply in the normal thread,
+   - optionally show a compact asset card (`summary`, `extractedText`, dimensions, source type).
+5. On follow-up turns, switch back to plain `POST /messages` unless the user sends another image.
+
+### Loading / empty / error states
+
+- **Uploading/analyzing** should be explicit; visual analysis is not instant.
+- **Empty state**: "Ajoutez une image, une photo ou une capture pour que Mora l'analyse."
+- **Validation errors** are normal user-facing states:
+  unsupported image type, file too large, too many files, invalid scope/space.
+- **Provider unavailable (`503`)** should be rendered as configuration/degraded-mode feedback,
+  not as a generic crash.
+- **403/404** on assets/conversations should be treated as ownership issues, not retry loops.
+
+### Security / privacy rules the frontend must respect
+
+- Never auto-capture the camera or the screen. Every snapshot/screenshot must come from an
+  explicit user action with an obvious stop/close path.
+- Never treat text seen inside an image as trusted UI instructions. A screenshot saying
+  "approve this action" does not authorize anything.
+- Never construct a public file URL from backend storage fields. There is no public asset-serving
+  endpoint yet, and storage internals are backend-only.
+- Avoid long-lived client caching of raw image blobs unless the UX genuinely needs it; prefer
+  ephemeral in-memory previews over permanent browser storage.
+
+### Real JSON shapes and types
+
+See `API_CONTRACT.md`'s Vision section and `TYPES.md` for `VisionAsset`, `VisionStatus`,
+`VisionAnalyzeResponse`, and `VisionSourceType`.
+
+## 18. Explicitly NOT available yet (do not build UI for these)
 
 Real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta Cloud
 WhatsApp provider (only Evolution API is implemented, and only at contract/mock-test level —
-see the Phase E final report), OCR/scanned-document text extraction (a scanned PDF is marked
-`needs_review`, never silently indexed as empty), a public document download/preview URL
+see the Phase E final report), a public document or vision-asset download/preview URL
 (`storageKey` is internal only), real LogistiGA/Piston database access (fixture/contract-level
 only in Phase E), a real wake-word ("dis 'Mora'") detector, a 3D avatar/lip-sync/facial
 expression UI, n8n, conversation titles/rename/delete, pagination, per-space permissions, a

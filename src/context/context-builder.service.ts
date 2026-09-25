@@ -35,6 +35,7 @@ export interface ContextBuilderParams {
   conversationId: string;
   systemPrompt: string;
   latestUserMessage: string;
+  externalContextNotes?: string[];
 }
 
 export interface ContextBuilderResult {
@@ -144,6 +145,10 @@ export class ContextBuilderService {
           })
           .join('\n');
       pushIfBudgetAllows(documentsText);
+    }
+
+    for (const note of params.externalContextNotes ?? []) {
+      pushIfBudgetAllows(note);
     }
 
     // Recent messages: if a summary already covers earlier turns, only the

@@ -19,8 +19,11 @@ export interface OrchestratorInput {
   user: AgentUser;
   message: string;
   conversationId?: string;
-  channel?: 'text' | 'voice';
+  channel?: 'text' | 'voice' | 'vision';
   recentInterruption?: boolean;
+  externalContextNotes?: string[];
+  userMessageMetadata?: Record<string, unknown>;
+  routingOverride?: Pick<RouterDecisionResult, 'route' | 'scope' | 'space'>;
 }
 
 export interface OrchestratorConfirmationAction {
@@ -33,6 +36,7 @@ export interface OrchestratorConfirmationAction {
 
 export interface OrchestratorResult {
   conversationId: string;
+  userMessageId: string;
   messageId: string;
   response: string;
   route: RouterDecisionResult['route'];
@@ -86,7 +90,10 @@ export class MoraOrchestratorService {
       input.conversationId,
     );
 
-    const decision = await this.routerService.classify(input.message, input.user.id);
+    let decision = await this.routerService.classify(input.message, input.user.id);
+    if (input.routingOverride) {
+      decision = { ...decision, ...input.routingOverride, confidence: Math.max(decision.confidence, 0.95) };
+    }
 
     // Saved BEFORE dispatch: ContextBuilderService/getScopedHistory reads
     // this same row back as the last turn of history for the agent call.
@@ -96,7 +103,7 @@ export class MoraOrchestratorService {
       content: input.message,
       scope: decision.scope,
       space: decision.space,
-      metadata: { intent: decision.intent, method: decision.method },
+      metadata: { intent: decision.intent, method: decision.method, ...input.userMessageMetadata },
     });
 
     const { content: responseContent, metadata: responseMetadata, action } = await this.dispatch(
@@ -106,6 +113,7 @@ export class MoraOrchestratorService {
       conversation.id,
       input.channel ?? 'text',
       input.recentInterruption ?? false,
+      input.externalContextNotes ?? [],
     );
 
     const assistantMessage = await this.conversationsService.addMessage({
@@ -146,6 +154,7 @@ export class MoraOrchestratorService {
 
     return {
       conversationId: conversation.id,
+      userMessageId: userMessage.id,
       messageId: assistantMessage.id,
       response: responseContent,
       route: decision.route,
@@ -161,8 +170,9 @@ export class MoraOrchestratorService {
     message: string,
     decision: RouterDecisionResult,
     conversationId: string,
-    channel: 'text' | 'voice',
+    channel: 'text' | 'voice' | 'vision',
     recentInterruption: boolean,
+    externalContextNotes: string[],
   ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
     if (decision.route === 'direct') {
       return { content: this.buildDirectReply(decision), metadata: { agent: 'direct' } };
@@ -194,6 +204,7 @@ export class MoraOrchestratorService {
             routerDecision: decision,
             channel,
             recentInterruption,
+            externalContextNotes,
           })
         : await this.professionalAgent.handle({
             user,
@@ -202,6 +213,7 @@ export class MoraOrchestratorService {
             routerDecision: decision,
             channel,
             recentInterruption,
+            externalContextNotes,
           });
 
     return this.resolveAgentResponse(user, message, decision, conversationId, scope, agentResponse);

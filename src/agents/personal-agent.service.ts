@@ -37,6 +37,7 @@ export class PersonalAgentService {
         SYSTEM_PROMPT_PREFIX(input.user.displayName, this.timeContext.describeNow()) +
         (input.channel === 'voice' && input.recentInterruption ? ` ${VOICE_INTERRUPTION_NOTE}` : ''),
       latestUserMessage: input.message,
+      externalContextNotes: input.externalContextNotes,
     });
 
     const response = await this.llmService.complete(

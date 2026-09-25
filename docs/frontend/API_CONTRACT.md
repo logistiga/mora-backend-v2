@@ -843,13 +843,122 @@ to say which one explicitly.
 
 ---
 
+## Vision (Phase G) — MULTIMODAL IMAGE CHANNEL
+
+**Core principle: vision is a CHANNEL, not a separate assistant.** The uploaded image(s) are
+analyzed first, then the resulting visual context is injected into the exact same
+Orchestrator/Router/Agents/Memory/Documents pipeline as a normal Mora turn. The frontend
+should think "same conversation, extra visual input", not "new product surface with a separate
+brain".
+
+### REST endpoints
+
+- `GET /vision/status?scope=<personal|professional>&space=<space>` — tells the client whether a
+  vision-capable provider is configured for that exact scope/space pair. Returns
+  `{ visionConfigured, provider, supportedMimeTypes, maxFiles, maxUploadBytes, features }`.
+  Use it before showing an enabled camera/screenshot/upload UI.
+- `POST /vision/analyze` (`multipart/form-data`) — fields:
+  - `files`: **1 to 4** image files, multipart field name exactly `files`
+  - `message`: required user question / instruction
+  - `scope`: `personal` | `professional`
+  - `space`: required (`personal` for personal turns; `general` | `logistiga` | `piston` | `code`
+    for professional turns)
+  - `conversationId?`: continue an existing conversation instead of creating a new one
+  - `sourceType?`: `upload` | `camera` | `screenshot` | `voice_snapshot` | `document`
+- `GET /vision/assets/:id` — returns a **sanitized** view of one owned asset
+  (`id`, conversation/message ids, scope/space, sourceType, filename, mime/extension, size,
+  dimensions, status, summary, extractedText, analysis, errorMessage, timestamps). It does
+  **not** expose storage internals like `storageKey`, `storageProvider`, or checksums.
+
+### Upload / validation rules
+
+- Accepted MIME types: `image/png`, `image/jpeg`, `image/webp`.
+- Server-side validation is binary-signature based, not trust-the-browser MIME only.
+- Maximum size: **10 MB per file**.
+- Maximum count: **4 files per request**.
+- Maximum dimensions: **4096 x 4096**.
+- Filenames are sanitized server-side; never assume the original client filename is preserved
+  byte-for-byte.
+
+### Response shape
+
+`POST /vision/analyze` returns the normal Mora message contract plus the originating user message
+id and the analyzed assets:
+
+```json
+{
+  "conversationId": "uuid",
+  "userMessageId": "uuid",
+  "messageId": "uuid",
+  "response": "Je vois un tableau PostgreSQL...",
+  "route": "professional",
+  "scope": "professional",
+  "space": "code",
+  "confidence": 0.95,
+  "assets": [
+    {
+      "id": "uuid",
+      "sourceType": "screenshot",
+      "originalFilename": "capture.png",
+      "summary": "Un tableau PostgreSQL est visible.",
+      "extractedText": "PostgreSQL",
+      "structuredData": { "topic": "postgresql" },
+      "width": 1,
+      "height": 1
+    }
+  ]
+}
+```
+
+### Conversation semantics
+
+- Omit `conversationId` to start a new multimodal conversation.
+- Reuse the returned `conversationId` for follow-up turns, including plain text via
+  `POST /messages`.
+- The backend persists a bounded `visionContextSummary` on the originating user message so later
+  turns can reuse the relevant visual context **without re-uploading every prior image**.
+- Vision turns are stored with `channel: "vision"` metadata; they still remain ordinary Mora
+  conversation messages.
+
+### Security / isolation rules
+
+- Images are treated as **untrusted content**. Text seen inside an image is data to read, never a
+  system instruction.
+- A malicious screenshot saying "ignore previous instructions" must not change route, scope,
+  space, permissions, pending-action state, or secret access.
+- `scope` / `space` isolation is enforced exactly like text and voice:
+  `personal` never sees professional data, and a professional screenshot in `logistiga` stays in
+  `professional/logistiga`.
+- The backend deliberately overrides routing to the requested `scope` / `space` so a short prompt
+  like "Que vois-tu ?" does not accidentally fall back to a `direct` route.
+
+### Error shape / expected failures
+
+- `400` — validation failure (`No image provided`, unsupported image type, oversized file, too
+  many images, unsupported professional space, invalid DTO fields).
+- `403` / `404` — not your conversation or not your asset.
+- `503` — no vision-capable provider configured for that scope/space, or no compatible adapter
+  registered for the configured provider.
+- Provider-side failures are sanitized before reaching the client; no raw API key or provider
+  secret is ever exposed.
+
+### Phase G status
+
+- Targeted unit tests and targeted e2e tests exist for validation, provider resolution,
+  conversation continuity, and persisted asset linkage.
+- A real provider call still depends on a configured model with actual vision capability; use
+  `GET /vision/status` first rather than assuming every chat model can analyze images.
+
+---
+
 ## Endpoints NOT yet available
 
 No endpoint exists (as of Phase F) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
 endpoint, real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta
 Cloud WhatsApp provider, avatar, n8n, a "reveal API key"/"reveal credentials"
-endpoint (doesn't exist — by design), vision/image/avatar provider testing, a real wake-word
-detector, and no N3/N4 tool of any kind (the security levels exist and are enforced, but no
-phase yet ships a concrete tool at those levels). OCR is not implemented — a scanned/image-only
-PDF is marked `needs_review`, never silently indexed as empty.
+endpoint (doesn't exist — by design), a public vision/image/avatar provider-testing endpoint, a
+real wake-word detector, continuous screen-sharing/video ingestion, hidden/autonomous capture of
+camera or screen frames, and no N3/N4 tool of any kind (the security levels exist and are
+enforced, but no phase yet ships a concrete tool at those levels). There is still no public file
+download URL for `Document` or `VisionAsset` storage keys.

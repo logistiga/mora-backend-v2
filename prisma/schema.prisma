@@ -50,6 +50,7 @@ model User {
   pendingActions PendingAction[]
   toolCalls      ToolCall[]
   documents      Document[]
+  visionAssets   VisionAsset[]
   contacts       Contact[]
   contactIdentities ContactIdentity[]
   whatsAppAccounts  WhatsAppAccount[]
@@ -97,6 +98,7 @@ model Conversation {
   title String?
 
   messages        Message[]
+  visionAssets    VisionAsset[]
   routerDecisions RouterDecision[]
   summaries       ConversationSummary[]
 
@@ -117,6 +119,8 @@ model Message {
   scope    String // 'direct' | 'personal' | 'professional' | 'hybrid'
   space    String // 'direct' | 'personal' | 'general' | 'logistiga' | 'piston' | 'code' | 'hybrid'
   metadata Json?
+
+  visionAssets VisionAsset[]
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1196,4 +1200,51 @@ model VoiceProfile {
 
   @@index([userId])
   @@map("voice_profiles")
+}
+
+// ============================================================================
+// Phase G — Vision / Multimodal
+// ============================================================================
+
+model VisionAsset {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String?      @map("message_id") @db.Uuid
+  message        Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  scope String
+  space String
+
+  sourceType       String @map("source_type") // upload|camera|screenshot|voice_snapshot|document
+  originalFilename String @map("original_filename")
+  mimeType         String @map("mime_type")
+  extension        String
+  sizeBytes        Int    @map("size_bytes")
+  width            Int?
+  height           Int?
+
+  storageProvider String @map("storage_provider")
+  storageKey      String @map("storage_key")
+  checksum        String
+
+  status String @default("ready") // ready|analyzed|failed|archived
+
+  summary       String?
+  extractedText String? @map("extracted_text")
+  analysis      Json?
+  metadata      Json?
+  errorMessage  String? @map("error_message")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  analyzedAt DateTime? @map("analyzed_at")
+
+  @@index([userId, conversationId, scope, space, createdAt])
+  @@index([messageId])
+  @@index([checksum])
+  @@map("vision_assets")
 }
