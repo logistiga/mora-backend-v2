@@ -54,8 +54,10 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
         return {
           pinoHttp: {
             level: env === 'production' ? 'info' : 'debug',
+            // pino-pretty is a dev dependency, absent from production images:
+            // gate it on NODE_ENV, not on `app.env` (which is `staging` there).
             transport:
-              env !== 'production'
+              env !== 'production' && process.env.NODE_ENV !== 'production'
                 ? { target: 'pino-pretty', options: { singleLine: true } }
                 : undefined,
             autoLogging: env !== 'test',
