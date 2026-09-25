@@ -59,6 +59,7 @@ model User {
   voiceSessions     VoiceSession[]
   voiceProfiles     VoiceProfile[]
   avatarProfile     AvatarProfile?
+  bugReports        BugReport[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -408,6 +409,7 @@ model LlmCall {
   id         String  @id @default(uuid()) @db.Uuid
   userId     String? @map("user_id") @db.Uuid
   providerId String? @map("provider_id") @db.Uuid
+  requestId  String? @map("request_id")
 
   kind  String
   model String
@@ -428,6 +430,7 @@ model LlmCall {
 
   @@index([userId])
   @@index([providerId])
+  @@index([requestId])
   @@map("llm_calls")
 }
 
@@ -586,6 +589,35 @@ model ToolCall {
   @@index([userId])
   @@index([pendingActionId])
   @@map("tool_calls")
+}
+
+model BugReport {
+  id             String  @id @default(uuid()) @db.Uuid
+  userId         String? @map("user_id") @db.Uuid
+  user           User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  requestId      String? @map("request_id")
+  conversationId String? @map("conversation_id") @db.Uuid
+  voiceSessionId String? @map("voice_session_id") @db.Uuid
+
+  category      String
+  severity      String
+  title         String
+  description   String
+  frontendRoute String? @map("frontend_route")
+  apiRoute      String? @map("api_route")
+  browserInfo   String? @map("browser_info")
+  appVersion    String? @map("app_version")
+  metadata      Json?
+  status        String  @default("open")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([requestId])
+  @@index([conversationId])
+  @@index([voiceSessionId])
+  @@map("bug_reports")
 }
 
 // ============================================================================

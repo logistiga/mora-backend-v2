@@ -10,14 +10,27 @@ All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise
   "timestamp": "2026-09-22T13:00:00.000Z",
   "path": "/api/v1/users/me",
   "method": "GET",
+  "requestId": "req_123",
   "message": "Unauthorized"
 }
 ```
 `message` can be a string or a string array (validation errors return an array, one entry
 per failed field).
 
+**Request correlation**:
+- Every HTTP response now includes `X-Request-Id`.
+- Error bodies also include the same `requestId`.
+- The frontend should preserve/show this ID in bug reporting and debug UI instead of inventing
+  its own correlation token.
+
 **Rate limiting**: global default 100 requests / 60s per client (env-configurable); `POST
-/auth/login` is stricter: 5 requests / 60s. A throttled request returns `429`.
+/auth/login` is stricter: 5 requests / 60s. Additional stricter endpoints:
+- `POST /messages`: 30 / 60s
+- `POST /documents`: 10 / 60s
+- `POST /vision/analyze`: 6 / 60s
+- `POST /voice/sessions`: 12 / 60s
+- `POST /bug-reports`: 5 / 60s
+A throttled request returns `429`.
 
 ---
 
@@ -85,7 +98,9 @@ per failed field).
     "status": "ok",
     "info": { "postgres": { "status": "up" }, "redis": { "status": "up" } },
     "error": {},
-    "details": { "postgres": { "status": "up" }, "redis": { "status": "up" } }
+    "details": { "postgres": { "status": "up" }, "redis": { "status": "up" } },
+    "environment": "staging",
+    "version": { "build": "2026.09.25", "gitCommit": "4835cee" }
   }
   ```
 - **Failure — 503**: same shape, a failing check appears under `error` with
@@ -141,6 +156,71 @@ per failed field).
     }
   }
   ```
+
+---
+
+## Bug Reports (Staging / Debug UX)
+
+### `POST /api/v1/bug-reports`
+- **Auth**: `Authorization: Bearer <accessToken>`
+- **Headers**: optional `X-Request-Id` if the frontend already has one from a failing request.
+- **Body**:
+  ```json
+  {
+    "category": "avatar",
+    "severity": "high",
+    "title": "Avatar freeze after reconnect",
+    "description": "The avatar stopped animating after the voice session recovered.",
+    "requestId": "req_123",
+    "conversationId": "uuid (optional)",
+    "voiceSessionId": "uuid (optional)",
+    "frontendRoute": "/voice",
+    "apiRoute": "/api/v1/voice/sessions",
+    "browserInfo": "Chrome 140 / Windows 11",
+    "appVersion": "staging-2026-09-25",
+    "metadata": { "panel": "voice", "step": "after reconnect" }
+  }
+  ```
+- `category`: `ui | api | voice | vision | avatar | auth | performance | other`
+- `severity`: `low | medium | high | critical`
+- **Success — 201**:
+  ```json
+  {
+    "id": "uuid",
+    "userId": "uuid",
+    "requestId": "req_123",
+    "conversationId": "uuid",
+    "voiceSessionId": "uuid",
+    "category": "avatar",
+    "severity": "high",
+    "title": "Avatar freeze after reconnect",
+    "description": "The avatar stopped animating after the voice session recovered.",
+    "frontendRoute": "/voice",
+    "apiRoute": "/api/v1/voice/sessions",
+    "browserInfo": "Chrome 140 / Windows 11",
+    "appVersion": "staging-2026-09-25",
+    "metadata": { "panel": "voice", "step": "after reconnect" },
+    "status": "open",
+    "createdAt": "2026-09-25T12:00:00.000Z",
+    "updatedAt": "2026-09-25T12:00:00.000Z"
+  }
+  ```
+- **Security rule**: metadata is sanitized server-side; secrets/tokens/passwords/API keys are
+  dropped or redacted rather than persisted.
+
+### `GET /api/v1/bug-reports`
+- **Auth**: Bearer token, `ADMIN` role only.
+- **Query**: `status?`, `userId?`, `requestId?`, `limit?`
+- **Success — 200**: array of bug reports.
+
+### `PATCH /api/v1/bug-reports/:id`
+- **Auth**: Bearer token, `ADMIN` role only.
+- **Body**:
+  ```json
+  { "status": "investigating" }
+  ```
+- `status`: `open | investigating | resolved | ignored`
+- **Success — 200**: updated bug report row.
   When `action` is present, **nothing has been executed yet** — the frontend should render a
   confirm/cancel card and call `POST /pending-actions/:id/approve` or `/reject` (see below).
   When `action` is absent, the response is final (either a plain reply, or an N1 tool — e.g.

@@ -1,5 +1,6 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RequestContextService } from '../common/http/request-context.service.js';
 import { ReminderService } from './reminder.service.js';
 
 function buildService() {
@@ -15,8 +16,9 @@ function buildService() {
     add: vi.fn(async () => ({ id: 'job-1' })),
     getJob: vi.fn(async () => ({ remove: vi.fn(async () => undefined) })),
   };
-  const service = new ReminderService(prismaMock as never, queueMock as never);
-  return { service, prismaMock, queueMock };
+  const requestContext = { getRequestId: vi.fn(() => 'req-test') } as unknown as RequestContextService;
+  const service = new ReminderService(prismaMock as never, queueMock as never, requestContext);
+  return { service, prismaMock, queueMock, requestContext };
 }
 
 describe('ReminderService', () => {
@@ -35,7 +37,7 @@ describe('ReminderService', () => {
 
     expect(ctx.queueMock.add).toHaveBeenCalledWith(
       'deliver-reminder',
-      { reminderId: 'r1', userId: 'u1' },
+      { reminderId: 'r1', userId: 'u1', requestId: 'req-test' },
       expect.objectContaining({ jobId: 'r1' }),
     );
   });

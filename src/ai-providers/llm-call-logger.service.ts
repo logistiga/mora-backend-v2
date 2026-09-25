@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { RequestContextService } from '../common/http/request-context.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 
 export interface LogCallParams {
@@ -26,14 +27,19 @@ export interface LogCallParams {
 export class LlmCallLogger {
   private readonly logger = new Logger(LlmCallLogger.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly requestContext: RequestContextService,
+  ) {}
 
   async log(params: LogCallParams): Promise<void> {
     try {
+      const requestId = this.requestContext.getRequestId();
       await this.prisma.llmCall.create({
         data: {
           userId: params.userId,
           providerId: params.providerId,
+          requestId,
           kind: params.kind,
           model: params.model,
           route: params.route,

@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Queue } from 'bullmq';
+import { RequestContextService } from '../common/http/request-context.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import type { Prisma, Reminder } from '../generated/prisma/client.js';
 import type { CreateReminderDto } from './dto/create-reminder.dto.js';
@@ -31,6 +32,7 @@ export class ReminderService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(REMINDER_DELIVERY_QUEUE) private readonly deliveryQueue: Queue,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   async create(
@@ -55,11 +57,13 @@ export class ReminderService {
       },
     });
 
+    const requestId = this.requestContext.getRequestId();
     await this.deliveryQueue.add(
       REMINDER_DELIVERY_JOB,
-      { reminderId: reminder.id, userId },
+      { reminderId: reminder.id, userId, requestId },
       { ...REMINDER_JOB_DEFAULT_OPTIONS, delay: delayMs, jobId: reminder.id },
     );
+    this.logger.debug(`Queued reminder ${reminder.id} for delivery (requestId=${requestId ?? 'n/a'})`);
 
     return this.prisma.reminder.update({
       where: { id: reminder.id },

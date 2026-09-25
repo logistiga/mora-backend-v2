@@ -47,6 +47,8 @@ interface HealthResponse {
   info: Record<string, HealthCheckEntry>; // e.g. { postgres: {...}, redis: {...} }
   error: Record<string, HealthCheckEntry>;
   details: Record<string, HealthCheckEntry>;
+  environment?: string;
+  version?: { build: string | null; gitCommit: string | null };
 }
 
 // ---- Conversations & Messages (Phase B) -----------------------------------
@@ -797,6 +799,32 @@ interface AvatarStatus {
   };
 }
 
+// ---- Bug reports (staging / debug UX) --------------------------------------
+
+type BugReportCategory = 'ui' | 'api' | 'voice' | 'vision' | 'avatar' | 'auth' | 'performance' | 'other';
+type BugReportSeverity = 'low' | 'medium' | 'high' | 'critical';
+type BugReportStatus = 'open' | 'investigating' | 'resolved' | 'ignored';
+
+interface BugReport {
+  id: string;
+  userId: string | null;
+  requestId: string | null;
+  conversationId: string | null;
+  voiceSessionId: string | null;
+  category: BugReportCategory;
+  severity: BugReportSeverity;
+  title: string;
+  description: string;
+  frontendRoute: string | null;
+  apiRoute: string | null;
+  browserInfo: string | null;
+  appVersion: string | null;
+  metadata: Record<string, unknown> | null;
+  status: BugReportStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -804,6 +832,7 @@ interface ApiError {
   timestamp: string;
   path: string;
   method: string;
+  requestId: string;
   message: string | string[];
 }
 ```
@@ -811,6 +840,8 @@ interface ApiError {
 ## Notes for the frontend implementer
 
 - Dates are ISO 8601 strings (`Date`-parseable), not Unix timestamps.
+- Every HTTP response includes `X-Request-Id`; every error body also includes `requestId`.
+  Preserve it in logs, support tickets, and `POST /bug-reports`.
 - `metadata` fields are intentionally loose (`Record<string, unknown>`) — treat their
   contents as debug/optional-display info, never rely on a specific key being present in
   production UI logic beyond what's documented in `API_CONTRACT.md`.

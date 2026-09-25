@@ -64,6 +64,7 @@ If a UI idea conflicts with those files, follow the files and keep the UI honest
 - reminders
 - notifications
 - pending actions view
+- bug report form / debug panel using `POST /bug-reports`
 
 6. Documents and connections
 - documents upload/list/detail/status
@@ -90,11 +91,13 @@ If a UI idea conflicts with those files, follow the files and keep the UI honest
 - Clear personal vs professional separation.
 - Strong empty states and degraded states.
 - Honest error messages based on backend responses.
+- Always preserve/display `requestId` from API errors and failed flows.
 - Accessibility first: reduced motion support, keyboard support, good contrast, clear loading states.
 
 ## Chat behavior
 
 - `POST /messages` is the default conversation path.
+- Respect the backend rate limits on costly endpoints; debounce/retry responsibly instead of spam-retrying.
 - Show Mora replies as normal assistant messages.
 - When `action` is present in a message response, render a confirmation card with approve/reject.
 - Hybrid replies are normal messages, but visually explain that the request mixes scopes.
@@ -158,6 +161,23 @@ If a UI idea conflicts with those files, follow the files and keep the UI honest
   - manual screenshot
 - Continue the same conversation with returned `conversationId`.
 - For `sourceType: "voice_snapshot"`, keep the same unified chat/voice/avatar experience.
+
+## Debug / bug reporting behavior
+
+- Every HTTP response exposes `X-Request-Id`; every error body includes `requestId`.
+- Add a lightweight "Report a bug" flow that can send:
+  - category
+  - severity
+  - title
+  - description
+  - requestId
+  - conversationId
+  - voiceSessionId
+  - current frontend route
+  - browser info
+  - sanitized metadata
+- Use `POST /bug-reports` for end-user bug submission.
+- Do not ask the frontend to collect or send secrets, JWTs, refresh tokens, API keys, or cookies.
 
 ## Security and privacy behavior
 

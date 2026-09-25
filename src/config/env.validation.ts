@@ -36,6 +36,22 @@ export class EnvironmentVariables {
   @IsString()
   CORS_ORIGIN: string = 'http://localhost:3000';
 
+  @IsOptional()
+  @IsString()
+  MORA_ALLOWED_ORIGINS?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_APP_ENV?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_BUILD_VERSION?: string;
+
+  @IsOptional()
+  @IsString()
+  MORA_GIT_COMMIT?: string;
+
   @IsString()
   POSTGRES_USER: string;
 

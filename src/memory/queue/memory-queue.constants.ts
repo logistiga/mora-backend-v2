@@ -17,9 +17,11 @@ export const MEMORY_JOB_DEFAULT_OPTIONS = {
 export interface MemoryEmbeddingJobData {
   memoryId: string;
   userId: string;
+  requestId?: string;
 }
 
 export interface MemoryExtractionJobData {
+  requestId?: string;
   userId: string;
   conversationId: string;
   scope: 'personal' | 'professional';
@@ -30,6 +32,7 @@ export interface MemoryExtractionJobData {
 }
 
 export interface ConversationSummaryJobData {
+  requestId?: string;
   conversationId: string;
   userId: string;
   scope: string;

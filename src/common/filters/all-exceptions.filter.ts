@@ -4,18 +4,28 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
-  Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import type { AuthenticatedUser } from '../../auth/entities/token-payload.interface.js';
 
 interface ErrorResponseBody {
   statusCode: number;
   timestamp: string;
   path: string;
   method: string;
+  requestId: string;
   message: string | string[];
   error?: string;
 }
+
+type RequestWithContext = Request & {
+  id?: string;
+  user?: AuthenticatedUser;
+  log?: {
+    warn(payload: object, message?: string): void;
+    error(payload: object, message?: string): void;
+  };
+};
 
 /**
  * Catches everything that escapes controllers/services and turns it into a
@@ -24,12 +34,10 @@ interface ErrorResponseBody {
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  private readonly logger = new Logger(AllExceptionsFilter.name);
-
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
+    const request = ctx.getRequest<RequestWithContext>();
 
     const isHttpException = exception instanceof HttpException;
     const status = isHttpException
@@ -44,18 +52,39 @@ export class AllExceptionsFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       method: request.method,
+      requestId: request.id ?? 'unknown',
       message,
     };
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error(
-        `${request.method} ${request.url} -> ${status}`,
-        exception instanceof Error ? exception.stack : String(exception),
+      request.log?.error(
+        {
+          requestId: request.id,
+          method: request.method,
+          path: request.url,
+          statusCode: status,
+          userId: request.user?.id,
+          err:
+            exception instanceof Error
+              ? { name: exception.name, message: exception.message }
+              : { message: String(exception) },
+        },
+        'Unhandled request failure',
       );
     } else {
-      this.logger.warn(`${request.method} ${request.url} -> ${status}`);
+      request.log?.warn(
+        {
+          requestId: request.id,
+          method: request.method,
+          path: request.url,
+          statusCode: status,
+          userId: request.user?.id,
+        },
+        'Handled request exception',
+      );
     }
 
+    response.setHeader('X-Request-Id', body.requestId);
     response.status(status).json(body);
   }
 

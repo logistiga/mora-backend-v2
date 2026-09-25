@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
@@ -12,8 +13,11 @@ import { AuthModule } from './auth/auth.module.js';
 import { BusinessConnectorsModule } from './business-connectors/business-connectors.module.js';
 import { CalendarModule } from './calendar/calendar.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
+import { RequestContextInterceptor } from './common/http/request-context.interceptor.js';
+import { RequestContextModule } from './common/http/request-context.module.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/configuration.js';
+import { BugReportsModule } from './bug-reports/bug-reports.module.js';
 import { ContactsModule } from './contacts/contacts.module.js';
 import { ContextModule } from './context/context.module.js';
 import { ConversationsModule } from './conversations/conversations.module.js';
@@ -42,6 +46,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
 @Module({
   imports: [
     ConfigModule,
+    RequestContextModule,
     LoggerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
@@ -54,7 +59,28 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
                 ? { target: 'pino-pretty', options: { singleLine: true } }
                 : undefined,
             autoLogging: env !== 'test',
-            redact: ['req.headers.authorization'],
+            genReqId: (req, res) => {
+              const incoming = req.headers['x-request-id'];
+              const requestId =
+                typeof incoming === 'string' && incoming.trim()
+                  ? incoming.trim()
+                  : randomUUID();
+              res.setHeader('X-Request-Id', requestId);
+              return requestId;
+            },
+            customProps: (req) => ({
+              requestId: req.id,
+              userId: (req as { user?: { id?: string } }).user?.id,
+            }),
+            redact: [
+              'req.headers.authorization',
+              'req.headers.cookie',
+              'res.headers["set-cookie"]',
+              'req.body.password',
+              'req.body.refreshToken',
+              'req.body.apiKey',
+              'req.body.credentials',
+            ],
           },
         };
       },
@@ -84,6 +110,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
     ContextModule,
     AgentsModule,
     AuditModule,
+    BugReportsModule,
     ConversationsModule,
     MemoryModule,
     MemoryQueueModule,
@@ -108,6 +135,10 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     // Without this, @Exclude()/@Expose() on entities like UserEntity are inert
     // and fields such as passwordHash would be serialized as-is in responses.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestContextInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useFactory: (reflector: Reflector) => new ClassSerializerInterceptor(reflector),

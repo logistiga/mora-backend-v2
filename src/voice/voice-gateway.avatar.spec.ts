@@ -77,6 +77,7 @@ describe('VoiceGateway — avatar realtime contract', () => {
     await (gateway as any).handleMessage(
       socket,
       'user-1',
+      'connection-1',
       false,
       Buffer.from(JSON.stringify({ event: 'session.start', data: { sessionId: 'session-1' } })),
       null,

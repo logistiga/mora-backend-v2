@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AiProviderService } from '../ai-providers/ai-provider.service.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { TimeContextService } from '../common/time/time-context.service.js';
@@ -26,6 +27,7 @@ export class VoiceController {
   ) {}
 
   @Post('sessions')
+  @Throttle({ default: { limit: 12, ttl: 60_000 } })
   async createSession(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateVoiceSessionDto) {
     return this.sessionService.create({
       userId: user.id,

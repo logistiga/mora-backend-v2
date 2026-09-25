@@ -1,4 +1,5 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { AvatarStateService } from '../avatar/avatar-state.service.js';
 import type { AvatarChannel, AvatarState } from '../avatar/avatar.types.js';
 import { ConfigService } from '@nestjs/config';
@@ -89,7 +90,8 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       socket.close(4001, 'unauthorized');
       return;
     }
-    voiceDebug('websocket_connected', { userId: auth.userId });
+    const connectionId = randomUUID();
+    voiceDebug('websocket_connected', { connectionId, userId: auth.userId });
 
     let sessionId: string | null = null;
     let lastActivityAt = Date.now();
@@ -102,13 +104,13 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
 
     socket.on('message', (raw, isBinary) => {
       lastActivityAt = Date.now();
-      void this.handleMessage(socket, auth.userId, isBinary, raw as Buffer, sessionId, (id) => {
+      void this.handleMessage(socket, auth.userId, connectionId, isBinary, raw as Buffer, sessionId, (id) => {
         sessionId = id;
       });
     });
 
     socket.on('close', (code, reason) => {
-      voiceDebug('websocket_disconnected', { sessionId, code, reason: reason?.toString() });
+      voiceDebug('websocket_disconnected', { connectionId, sessionId, code, reason: reason?.toString() });
       clearInterval(idleCheck);
       if (sessionId) {
         this.sockets.delete(sessionId);
@@ -139,6 +141,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
   private async handleMessage(
     socket: WebSocket,
     userId: string,
+    connectionId: string,
     isBinary: boolean,
     raw: Buffer,
     currentSessionId: string | null,
@@ -183,7 +186,12 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        voiceDebug('session_start_received', { sessionId: session.id, userId, previousStatus: session.status });
+        voiceDebug('session_start_received', {
+          connectionId,
+          sessionId: session.id,
+          userId,
+          previousStatus: session.status,
+        });
         const isReconnect = RECONNECTABLE_SESSION_STATES.has(session.status);
         setSessionId(session.id);
         this.sockets.set(session.id, socket);
@@ -214,7 +222,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
           data: { sessionId: session.id, state: 'listening', protocolVersion: VOICE_PROTOCOL_VERSION, audioFormat: VOICE_AUDIO_FORMAT },
         });
         this.emitAvatarState(socket, this.runtimeRegistry.get(session.id), 'listening');
-        voiceDebug('session_ready_sent', { sessionId: session.id, language: session.language });
+        voiceDebug('session_ready_sent', { connectionId, sessionId: session.id, language: session.language });
         break;
       }
 

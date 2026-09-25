@@ -20,7 +20,7 @@ async function bootstrap(): Promise<void> {
   const appConfig = configService.get<AppConfig>('app')!;
 
   app.enableCors({
-    origin: appConfig.corsOrigin.split(',').map((origin) => origin.trim()),
+    origin: appConfig.allowedOrigins,
     credentials: true,
   });
 

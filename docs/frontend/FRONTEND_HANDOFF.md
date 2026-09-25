@@ -27,10 +27,13 @@ token). No social login. No password reset flow yet.
   force logout and return to the Login screen.
 - Refresh token rotates on every use — **always replace the stored refresh token with the
   one returned by `/auth/refresh`** (the old one becomes invalid immediately).
+- Preserve `X-Request-Id` from failing API responses; show/copy it in debug UI and include it
+  when creating a backend bug report.
 
 **Loading / empty / error states:** standard form loading spinner on submit; show the
 `message` field from error responses (e.g. "Invalid credentials", "A user with this email
 already exists") directly — they're already user-presentable French/English short strings.
+Also keep `requestId` available in a collapsible debug section or a copy button.
 
 **Not available yet:** password reset, email verification, 2FA, social login, "remember me"
 beyond the refresh token's own 7-day lifetime.

@@ -29,5 +29,8 @@ describe('Health (e2e)', () => {
     expect(response.body.status).toBe('ok');
     expect(response.body.details.postgres.status).toBe('up');
     expect(response.body.details.redis.status).toBe('up');
+    expect(response.body.environment).toBeDefined();
+    expect(response.body.version).toBeDefined();
+    expect(response.headers['x-request-id']).toBeTruthy();
   });
 });

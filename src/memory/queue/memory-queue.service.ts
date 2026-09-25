@@ -1,6 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Queue } from 'bullmq';
+import { RequestContextService } from '../../common/http/request-context.service.js';
 import {
   CONVERSATION_SUMMARY_JOB,
   CONVERSATION_SUMMARY_QUEUE,
@@ -28,20 +29,36 @@ export class MemoryQueueService {
     @InjectQueue(MEMORY_EMBEDDING_QUEUE) private readonly embeddingQueue: Queue,
     @InjectQueue(MEMORY_EXTRACTION_QUEUE) private readonly extractionQueue: Queue,
     @InjectQueue(CONVERSATION_SUMMARY_QUEUE) private readonly summaryQueue: Queue,
+    private readonly requestContext: RequestContextService,
   ) {}
 
   async enqueueEmbedding(data: MemoryEmbeddingJobData): Promise<void> {
-    await this.embeddingQueue.add(MEMORY_EMBEDDING_JOB, data, MEMORY_JOB_DEFAULT_OPTIONS);
-    this.logger.debug(`Queued embedding job for memory ${data.memoryId}`);
+    const requestId = data.requestId ?? this.requestContext.getRequestId();
+    await this.embeddingQueue.add(
+      MEMORY_EMBEDDING_JOB,
+      { ...data, requestId },
+      MEMORY_JOB_DEFAULT_OPTIONS,
+    );
+    this.logger.debug(`Queued embedding job for memory ${data.memoryId} (requestId=${requestId ?? 'n/a'})`);
   }
 
   async enqueueExtraction(data: MemoryExtractionJobData): Promise<void> {
-    await this.extractionQueue.add(MEMORY_EXTRACTION_JOB, data, MEMORY_JOB_DEFAULT_OPTIONS);
-    this.logger.debug(`Queued extraction job for message ${data.sourceMessageId}`);
+    const requestId = data.requestId ?? this.requestContext.getRequestId();
+    await this.extractionQueue.add(
+      MEMORY_EXTRACTION_JOB,
+      { ...data, requestId },
+      MEMORY_JOB_DEFAULT_OPTIONS,
+    );
+    this.logger.debug(`Queued extraction job for message ${data.sourceMessageId} (requestId=${requestId ?? 'n/a'})`);
   }
 
   async enqueueSummary(data: ConversationSummaryJobData): Promise<void> {
-    await this.summaryQueue.add(CONVERSATION_SUMMARY_JOB, data, MEMORY_JOB_DEFAULT_OPTIONS);
-    this.logger.debug(`Queued summary job for conversation ${data.conversationId}`);
+    const requestId = data.requestId ?? this.requestContext.getRequestId();
+    await this.summaryQueue.add(
+      CONVERSATION_SUMMARY_JOB,
+      { ...data, requestId },
+      MEMORY_JOB_DEFAULT_OPTIONS,
+    );
+    this.logger.debug(`Queued summary job for conversation ${data.conversationId} (requestId=${requestId ?? 'n/a'})`);
   }
 }

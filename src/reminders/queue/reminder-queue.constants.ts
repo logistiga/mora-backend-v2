@@ -17,4 +17,5 @@ export const REMINDER_JOB_DEFAULT_OPTIONS = {
 export interface ReminderDeliveryJobData {
   reminderId: string;
   userId: string;
+  requestId?: string;
 }

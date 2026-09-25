@@ -27,6 +27,9 @@ export class ReminderDeliveryProcessor extends WorkerHost {
 
   async process(job: Job<ReminderDeliveryJobData>): Promise<{ delivered: boolean; reason?: string }> {
     const { reminderId, userId } = job.data;
+    this.logger.debug(
+      `Processing reminder ${reminderId} (requestId=${job.data.requestId ?? 'n/a'}, jobId=${job.id ?? 'n/a'})`,
+    );
 
     const reminder = await this.prisma.reminder.findUnique({ where: { id: reminderId } });
     if (!reminder || reminder.userId !== userId) {
