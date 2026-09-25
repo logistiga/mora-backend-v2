@@ -1,4 +1,4 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G + Phase H)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
@@ -734,7 +734,7 @@ learn beyond the tool names.
 
 ---
 
-## Voice (Phase F) — REAL-TIME VOICE ENGINE
+## Voice (Phase F + Phase H) — REAL-TIME VOICE ENGINE + AVATAR EVENTS
 
 **Core principle: voice is a CHANNEL, not a new assistant.** A voice turn ends up calling the
 exact same Orchestrator/Router/Agents/Memory/Documents/Tools pipeline as a normal text message
@@ -796,8 +796,11 @@ misbehaving.
 |---|---|---|
 | `session.ready` | `{ sessionId, state, protocolVersion, audioFormat }` | |
 | `transcript.final` | `{ text }` | The ONLY transcript event Phase F emits — see below. |
+| `avatar.state` | `{ state, channel, expression, intensity, canInterrupt, pendingConfirmation, connection, sessionId?, conversationId?, scope?, space?, sourceType?, errorCode? }` | Phase H realtime avatar state. `connection`: `connected | reconnecting | disconnected`. |
+| `avatar.lipsync` | `{ mode, source, channel, durationMs, textLength, cues[] }` | Phase H estimated lip-sync contract. Each cue is `{ startMs, endMs, viseme, weight }`. |
 | `assistant.thinking.started` | — | Orchestrator call in flight. |
-| `assistant.speaking.started` / `assistant.speaking.ended` | — | Also the hook point future Phase H avatar lip-sync will attach to; no avatar logic exists yet. |
+| `assistant.speaking.started` / `assistant.speaking.ended` | — | Speech lifecycle hooks; Phase H avatar state and lip-sync are emitted alongside these events. |
+| `assistant.expression` | `{ expression, intensity, state, channel, source }` | Phase H controlled expression signal (`neutral`, `attentive`, `thinking`, `explaining`, `vision_focus`, `confirming`, `celebrating`, `concerned`, `error`). |
 | *(binary frame)* | MP3 bytes | Assistant audio, streamed sentence by sentence as it's synthesized. |
 | `action.pending_confirmation` | `{ pendingActionId, tool, securityLevel, summary }` | An N2/N3 tool call needs a spoken "oui"/"non" — same semantics as the text-chat `action` field. |
 | `action.executed` | `{ pendingActionId, toolName }` | |
@@ -813,6 +816,18 @@ protocol type for a future streaming-capable STT provider, but the shipped OpenA
 adapter is batch-only (`supportsPartialTranscripts: false`) — it produces one transcript per
 turn, sent as `transcript.final`. Do not build UI that waits for `transcript.partial` updates;
 show a "listening…"/waveform indicator instead until `transcript.final` arrives.
+
+**Phase H avatar mapping:** the backend now emits deterministic avatar state transitions for the
+same voice session:
+- `session.ready` / `session.resume` -> `avatar.state: listening`
+- `assistant.thinking.started` -> `avatar.state: thinking` + `assistant.expression`
+- `assistant.speaking.started` -> `avatar.state: speaking` + `assistant.expression` + `avatar.lipsync`
+- `action.pending_confirmation` -> `avatar.state: confirming`
+- `session.interrupt` or implicit barge-in -> `avatar.state: interrupted`, then `listening`
+- `session.pause` -> `avatar.state: paused`
+- `error` -> `avatar.state: error`
+- reconnect to an already-running session -> transient `avatar.state` with `connection: "reconnecting"` before the normal connected state
+- `session.end` -> `avatar.state: disconnected`
 
 **Confirmation via voice**: a bare "oui" is only ever bound to a `pendingActionId` that was
 raised in *that same session*. If two pending actions are open, the backend replies
@@ -837,9 +852,9 @@ to say which one explicitly.
 - **Wake word**: NOT implemented as a real detector — `mode: "wake_word"` is accepted by the API
   but currently resolves to an explicitly-labeled simulated/no-op detector
   (`isRealAudioTested: false`). Use `push_to_talk` or `continuous_session` for now.
-- **Avatar**: not built (deferred to Phase H). `assistant.speaking.started`/`ended` events exist
-  and are safe to wire up now; `assistant.expression` is reserved but never emitted with real
-  content in Phase F.
+- **Avatar realtime backend**: REAL in Phase H — profile/status REST endpoints, controlled
+  expressions, reconnect/disconnect states, and estimated lip-sync payloads are implemented and
+  covered by automated tests. No browser renderer ships in this backend repo.
 
 ---
 
@@ -917,8 +932,9 @@ id and the analyzed assets:
   `POST /messages`.
 - The backend persists a bounded `visionContextSummary` on the originating user message so later
   turns can reuse the relevant visual context **without re-uploading every prior image**.
-- Vision turns are stored with `channel: "vision"` metadata; they still remain ordinary Mora
-  conversation messages.
+- Vision turns are stored with `channel: "vision"` metadata; `sourceType: "voice_snapshot"`
+  upgrades the stored metadata to `channel: "voice_vision"` so the same conversation can drive
+  voice + avatar + image UX without a separate pipeline.
 
 ### Security / isolation rules
 
@@ -951,12 +967,129 @@ id and the analyzed assets:
 
 ---
 
+## Avatar (Phase H) — STATE, PROFILE, AND FRONTEND CONTRACT
+
+**Core principle: avatar is PRESENTATION STATE, not a second model.** The backend does not run a
+separate avatar brain. It exposes deterministic state, expression, and lip-sync payloads derived
+from the existing voice + vision + orchestrator pipeline so a frontend can animate Mora
+consistently.
+
+### REST endpoints
+
+- `GET /avatar/profile` — returns the caller's avatar profile, creating a default one on first
+  read if missing.
+- `PATCH /avatar/profile` — updates the caller's avatar preferences.
+- `GET /avatar/status` — returns avatar readiness, current profile, optional avatar provider
+  resolution, the voice WebSocket path/protocol, and supported realtime events/features.
+
+### `GET /avatar/profile`
+- **Auth**: `Authorization: Bearer <accessToken>`
+- **Success — 200**:
+  ```json
+  {
+    "id": "uuid",
+    "name": "Mora Core",
+    "avatarPreset": "mora_core",
+    "renderMode": "expressive_orb",
+    "baseExpression": "neutral",
+    "expressionIntensity": 0.7,
+    "lipSyncMode": "viseme_timeline",
+    "voiceSyncEnabled": true,
+    "idleEnabled": true,
+    "reducedMotion": false,
+    "settings": { "realtimeTransport": "voice_ws" },
+    "createdAt": "2026-09-25T00:10:00.000Z",
+    "updatedAt": "2026-09-25T00:10:00.000Z"
+  }
+  ```
+
+### `PATCH /avatar/profile`
+- **Auth**: Bearer token.
+- **Body** (all optional):
+  ```json
+  {
+    "name": "Mora Compact",
+    "avatarPreset": "mora_core",
+    "renderMode": "minimal",
+    "baseExpression": "attentive",
+    "expressionIntensity": 0.6,
+    "lipSyncMode": "viseme_timeline",
+    "voiceSyncEnabled": true,
+    "idleEnabled": true,
+    "reducedMotion": true,
+    "settings": { "theme": "dark" }
+  }
+  ```
+- **Success — 200**: same shape as `GET /avatar/profile`.
+- **Errors**: `400` (validation), `401`.
+
+### `GET /avatar/status`
+- **Auth**: Bearer token.
+- **Success — 200**:
+  ```json
+  {
+    "avatarConfigured": true,
+    "profile": {
+      "id": "uuid",
+      "name": "Mora Core",
+      "avatarPreset": "mora_core",
+      "renderMode": "expressive_orb",
+      "baseExpression": "neutral",
+      "expressionIntensity": 0.7,
+      "lipSyncMode": "viseme_timeline",
+      "voiceSyncEnabled": true,
+      "idleEnabled": true,
+      "reducedMotion": false,
+      "settings": { "realtimeTransport": "voice_ws" },
+      "createdAt": "2026-09-25T00:10:00.000Z",
+      "updatedAt": "2026-09-25T00:10:00.000Z"
+    },
+    "provider": null,
+    "realtime": {
+      "websocketPath": "/voice/ws",
+      "protocolVersion": 1,
+      "events": [
+        "avatar.state",
+        "assistant.expression",
+        "avatar.lipsync",
+        "assistant.speaking.started",
+        "assistant.speaking.ended",
+        "action.pending_confirmation",
+        "session.interrupted"
+      ]
+    },
+    "features": {
+      "expressions": true,
+      "lipSync": true,
+      "confirmations": true,
+      "reconnectStates": true,
+      "multimodalState": true,
+      "voiceVision": true
+    },
+    "privacy": {
+      "autoCapture": false,
+      "backgroundScreenMonitoring": false,
+      "liveCameraRequiresExplicitUserAction": true
+    }
+  }
+  ```
+
+### Rendering and privacy rules
+
+- `renderMode` is frontend presentation state only; the backend does not ship a 3D renderer.
+- `lipSyncMode: "viseme_timeline"` is estimated from Mora's response text, not provider phoneme timing.
+- `voiceSyncEnabled`, `idleEnabled`, and `reducedMotion` are user preferences the frontend should honor.
+- No autonomous camera capture, background screenshotting, or hidden streaming is allowed; avatar
+  animation must stay driven by explicit voice/vision actions already authorized by the user.
+
+---
+
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase F) for: audit entries, conversation rename/delete/title,
+No endpoint exists (as of Phase H) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
 endpoint, real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta
-Cloud WhatsApp provider, avatar, n8n, a "reveal API key"/"reveal credentials"
+Cloud WhatsApp provider, a browser-rendered 3D avatar scene or asset download endpoint, n8n, a "reveal API key"/"reveal credentials"
 endpoint (doesn't exist — by design), a public vision/image/avatar provider-testing endpoint, a
 real wake-word detector, continuous screen-sharing/video ingestion, hidden/autonomous capture of
 camera or screen frames, and no N3/N4 tool of any kind (the security levels exist and are

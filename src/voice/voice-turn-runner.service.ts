@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { AvatarChannel } from '../avatar/avatar.types.js';
 import { ConversationsService } from '../conversations/conversations.service.js';
 import { MoraOrchestratorService } from '../orchestrator/mora-orchestrator.service.js';
 import { PendingActionService } from '../pending-actions/pending-action.service.js';
@@ -14,7 +15,7 @@ import type { VoiceTurnLatency } from './voice.types.js';
 
 export interface VoiceTurnEvents {
   onAssistantThinkingStarted(): void;
-  onAssistantSpeakingStarted(): void;
+  onAssistantSpeakingStarted(payload: { text: string; channel: AvatarChannel; voiceSpeed?: number; lipSyncEnabled?: boolean }): void;
   onAudioChunk(chunk: Buffer): void;
   onAssistantSpeakingEnded(): void;
   onPendingConfirmation(payload: { pendingActionId: string; tool: string; securityLevel: string; summary: string }): void;
@@ -234,7 +235,7 @@ export class VoiceTurnRunnerService {
     const controller = new AbortController();
     state.ttsAbortController = controller;
 
-    events.onAssistantSpeakingStarted();
+    events.onAssistantSpeakingStarted({ text, channel: 'voice', voiceSpeed: speed, lipSyncEnabled: true });
     const chunks = splitIntoSentenceChunks(text);
     const speakStarted = Date.now();
     let firstByteRecorded = false;

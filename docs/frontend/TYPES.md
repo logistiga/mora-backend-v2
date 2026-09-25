@@ -1,4 +1,4 @@
-> # Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G)
+> # Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G + Phase H)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -567,7 +567,7 @@ interface EmailMessage {
   contactId: string | null;
 }
 
-// ---- Voice (Phase F) --------------------------------------------------------
+// ---- Voice (Phase F + Phase H realtime events) ------------------------------
 
 type VoiceSessionState =
   | 'created' | 'listening' | 'user_speaking' | 'transcribing' | 'thinking'
@@ -636,10 +636,62 @@ interface VoiceStatus {
   };
 }
 
+type AvatarChannel = 'text' | 'voice' | 'vision' | 'voice_vision';
+type AvatarState =
+  | 'idle' | 'listening' | 'thinking' | 'speaking' | 'confirming'
+  | 'interrupted' | 'paused' | 'error' | 'disconnected';
+type AvatarExpression =
+  | 'neutral' | 'attentive' | 'thinking' | 'explaining' | 'vision_focus'
+  | 'confirming' | 'celebrating' | 'concerned' | 'error';
+type AvatarLipSyncMode = 'viseme_timeline' | 'disabled';
+type AvatarViseme = 'sil' | 'A' | 'E' | 'I' | 'O' | 'U' | 'M' | 'F' | 'L' | 'S';
+type AvatarRenderMode = 'expressive_orb' | 'humanoid_placeholder' | 'minimal';
+
+interface AvatarStateEvent {
+  state: AvatarState;
+  channel: AvatarChannel;
+  expression: AvatarExpression;
+  intensity: number;
+  canInterrupt: boolean;
+  pendingConfirmation: boolean;
+  connection: 'connected' | 'reconnecting' | 'disconnected';
+  sessionId?: string;
+  conversationId?: string;
+  scope?: string;
+  space?: string;
+  sourceType?: string;
+  errorCode?: string;
+}
+
+interface AssistantExpressionEvent {
+  expression: AvatarExpression;
+  intensity: number;
+  state: AvatarState;
+  channel: AvatarChannel;
+  source: 'avatar_state_service';
+}
+
+interface AvatarLipSyncCue {
+  startMs: number;
+  endMs: number;
+  viseme: AvatarViseme;
+  weight: number;
+}
+
+interface AvatarLipSyncEvent {
+  mode: AvatarLipSyncMode;
+  source: 'estimated_text_timing';
+  channel: AvatarChannel;
+  durationMs: number;
+  textLength: number;
+  cues: AvatarLipSyncCue[];
+}
+
 // WebSocket event envelope (see API_CONTRACT.md for the full event table)
 interface VoiceServerEvent<T = unknown> {
   event:
     | 'session.ready' | 'transcript.partial' | 'transcript.final'
+    | 'avatar.state' | 'avatar.lipsync'
     | 'assistant.thinking.started' | 'assistant.speaking.started' | 'assistant.speaking.ended'
     | 'assistant.expression' | 'action.pending_confirmation' | 'action.executed'
     | 'action.clarification_needed' | 'session.state_changed' | 'session.interrupted'
@@ -703,6 +755,48 @@ interface VisionAnalyzeResponse extends MessageResponse {
   }>;
 }
 
+// ---- Avatar (Phase H REST contract) ----------------------------------------
+
+interface AvatarProfile {
+  id: string;
+  name: string;
+  avatarPreset: string;
+  renderMode: AvatarRenderMode;
+  baseExpression: AvatarExpression;
+  expressionIntensity: number;
+  lipSyncMode: AvatarLipSyncMode;
+  voiceSyncEnabled: boolean;
+  idleEnabled: boolean;
+  reducedMotion: boolean;
+  settings: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AvatarStatus {
+  avatarConfigured: boolean;
+  profile: AvatarProfile;
+  provider: { id: string; provider: string; model: string; kind: string } | null;
+  realtime: {
+    websocketPath: '/voice/ws';
+    protocolVersion: number;
+    events: string[];
+  };
+  features: {
+    expressions: boolean;
+    lipSync: boolean;
+    confirmations: boolean;
+    reconnectStates: boolean;
+    multimodalState: boolean;
+    voiceVision: boolean;
+  };
+  privacy: {
+    autoCapture: boolean;
+    backgroundScreenMonitoring: boolean;
+    liveCameraRequiresExplicitUserAction: boolean;
+  };
+}
+
 // ---- Error shape (every endpoint) ------------------------------------------
 
 interface ApiError {
@@ -721,12 +815,14 @@ interface ApiError {
   contents as debug/optional-display info, never rely on a specific key being present in
   production UI logic beyond what's documented in `API_CONTRACT.md`.
 - Phase F adds the first real-time transport: a native WebSocket at `/voice/ws` for the voice
-  channel only (see `VoiceServerEvent` above and `API_CONTRACT.md`). Phase G adds a multimodal
-  REST channel at `/vision/*` for image-based turns. Every other endpoint remains REST-only,
-  request/response.
+  channel. Phase H reuses that same socket for avatar state/expression/lip-sync events; Phase G
+  adds a multimodal REST channel at `/vision/*` for image-based turns. Every other endpoint
+  remains REST-only, request/response.
 - Phase F: `transcript.partial` exists in the `VoiceServerEvent` union for forward-compatibility
   but is never actually emitted in Phase F (the shipped STT provider is batch-only) — don't
   build UI logic that waits for it.
+- Phase H: `avatar.lipsync` is an estimated viseme timeline derived from response text, not a
+  phoneme-perfect provider stream. Respect `reducedMotion` / `voiceSyncEnabled` client-side.
 - `AiProvider` has no `apiKey` field on the wire, ever — don't add one to a local type either;
   a form component should keep a plaintext key entirely in local component state and send it
   only in the `POST`/`PATCH` request body, never store it in app state/cache alongside the rest

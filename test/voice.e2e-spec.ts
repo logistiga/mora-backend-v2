@@ -244,27 +244,34 @@ describe('Voice (e2e)', () => {
       expect(closeCode).toBe(4001);
     });
 
-    it('accepts a valid token and confirms session.start with session.ready', async () => {
+    it('accepts a valid token and confirms session.start with session.ready plus avatar.state', async () => {
       const created = await request(baseUrl)
         .post('/api/v1/voice/sessions')
         .set('Authorization', `Bearer ${tokenA}`)
         .send({ scope: 'personal', space: 'default' });
 
       const socket = new WebSocket(`${wsBaseUrl}/voice/ws?token=${tokenA}`);
-      const ready = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const outcome = await new Promise<{ ready: Record<string, unknown>; avatar: Record<string, unknown> | null }>((resolve, reject) => {
+        let ready: Record<string, unknown> | null = null;
+        let avatar: Record<string, unknown> | null = null;
         socket.on('open', () => {
           socket.send(JSON.stringify({ event: 'session.start', data: { sessionId: created.body.id } }));
         });
         socket.on('message', (raw) => {
           const parsed = JSON.parse(raw.toString());
-          if (parsed.event === 'session.ready') resolve(parsed.data);
+          if (parsed.event === 'session.ready') ready = parsed.data;
+          if (parsed.event === 'avatar.state') avatar = parsed.data;
+          if (ready && avatar) resolve({ ready, avatar });
         });
         socket.on('error', reject);
       });
 
-      expect(ready.sessionId).toBe(created.body.id);
-      expect(ready.state).toBe('listening');
-      expect(ready.protocolVersion).toBe(1);
+      expect(outcome.ready.sessionId).toBe(created.body.id);
+      expect(outcome.ready.state).toBe('listening');
+      expect(outcome.ready.protocolVersion).toBe(1);
+      expect(outcome.avatar?.state).toBe('listening');
+      expect(outcome.avatar?.channel).toBe('voice');
+      expect(outcome.avatar?.expression).toBe('attentive');
       socket.close();
     });
 

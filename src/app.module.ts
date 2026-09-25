@@ -6,6 +6,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { LoggerModule } from 'nestjs-pino';
 import { AgentsModule } from './agents/agents.module.js';
 import { AiProvidersModule } from './ai-providers/ai-providers.module.js';
+import { AvatarModule } from './avatar/avatar.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { BusinessConnectorsModule } from './business-connectors/business-connectors.module.js';
@@ -76,6 +77,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
     AuthModule,
     UsersModule,
     AiProvidersModule,
+    AvatarModule,
     LlmModule,
     EmbeddingModule,
     RouterModule,

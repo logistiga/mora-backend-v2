@@ -1,4 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { AvatarStateService } from '../avatar/avatar-state.service.js';
+import type { AvatarChannel, AvatarState } from '../avatar/avatar.types.js';
 import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
@@ -19,6 +21,15 @@ import { VOICE_AUDIO_FORMAT, VOICE_PROTOCOL_VERSION, type ClientToServerEventTyp
 
 const MAX_FRAME_BYTES = 32 * 1024; // one PCM16 frame must never approach this — real frames are a few KB
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // no client activity for 10 min -> close (AGENTS §26)
+const RECONNECTABLE_SESSION_STATES = new Set([
+  'listening',
+  'paused',
+  'thinking',
+  'assistant_speaking',
+  'transcribing',
+  'interrupted',
+  'user_speaking',
+]);
 
 interface ServerEvent {
   event: string;
@@ -58,6 +69,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     private readonly endOfTurn: EndOfTurnService,
     private readonly conversationsService: ConversationsService,
     private readonly pendingActionService: PendingActionService,
+    private readonly avatarState: AvatarStateService,
   ) {}
 
   onModuleInit(): void {
@@ -172,6 +184,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
         }
 
         voiceDebug('session_start_received', { sessionId: session.id, userId, previousStatus: session.status });
+        const isReconnect = RECONNECTABLE_SESSION_STATES.has(session.status);
         setSessionId(session.id);
         this.sockets.set(session.id, socket);
         this.runtimeRegistry.create({
@@ -193,10 +206,14 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
         if (session.status !== 'listening') {
           await this.sessionService.transition(session.id, 'listening').catch(() => undefined);
         }
+        if (isReconnect) {
+          this.emitAvatarState(socket, this.runtimeRegistry.get(session.id), 'listening', 'voice', false, undefined, 'reconnecting');
+        }
         this.sendEvent(socket, {
           event: 'session.ready',
           data: { sessionId: session.id, state: 'listening', protocolVersion: VOICE_PROTOCOL_VERSION, audioFormat: VOICE_AUDIO_FORMAT },
         });
+        this.emitAvatarState(socket, this.runtimeRegistry.get(session.id), 'listening');
         voiceDebug('session_ready_sent', { sessionId: session.id, language: session.language });
         break;
       }
@@ -215,6 +232,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
         if (currentSessionId) {
           await this.sessionService.transition(currentSessionId, 'paused').catch(() => undefined);
           this.sendEvent(socket, { event: 'session.state_changed', data: { state: 'paused' } });
+          this.emitAvatarState(socket, this.runtimeRegistry.get(currentSessionId), 'paused');
         }
         break;
       }
@@ -223,6 +241,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
         if (currentSessionId) {
           await this.sessionService.transition(currentSessionId, 'listening').catch(() => undefined);
           this.sendEvent(socket, { event: 'session.state_changed', data: { state: 'listening' } });
+          this.emitAvatarState(socket, this.runtimeRegistry.get(currentSessionId), 'listening');
         }
         break;
       }
@@ -230,6 +249,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       case 'session.end': {
         if (currentSessionId) {
           await this.sessionService.end(userId, currentSessionId).catch(() => undefined);
+          this.emitAvatarState(socket, this.runtimeRegistry.get(currentSessionId), 'disconnected');
           this.sendEvent(socket, { event: 'session.ended' });
           socket.close(1000, 'ended');
         }
@@ -406,11 +426,26 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
 
     let audioChunkCount = 0;
     const events: VoiceTurnEvents = {
-      onAssistantThinkingStarted: () => this.sendEvent(socket, { event: 'assistant.thinking.started' }),
-      onAssistantSpeakingStarted: () => {
+      onAssistantThinkingStarted: () => {
+        this.sendEvent(socket, { event: 'assistant.thinking.started' });
+        this.emitAvatarState(socket, state, 'thinking');
+        this.emitAssistantExpression(socket, 'thinking', 'voice');
+      },
+      onAssistantSpeakingStarted: (payload) => {
         voiceDebug('tts_request_start', { sessionId, turnId: turn.id, generationId });
         void this.sessionService.transition(sessionId, 'assistant_speaking').catch(() => undefined);
         this.sendEvent(socket, { event: 'assistant.speaking.started' });
+        this.emitAvatarState(socket, state, 'speaking', payload.channel);
+        this.emitAssistantExpression(socket, 'speaking', payload.channel);
+        this.sendEvent(socket, {
+          event: 'avatar.lipsync',
+          data: this.avatarState.buildLipSyncPlan({
+            text: payload.text,
+            channel: payload.channel,
+            voiceSpeed: payload.voiceSpeed,
+            enabled: payload.lipSyncEnabled,
+          }),
+        });
       },
       onAudioChunk: (chunk) => {
         audioChunkCount += 1;
@@ -420,12 +455,25 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
         voiceDebug('tts_playback_summary', { sessionId, turnId: turn.id, generationId, audioChunkCount });
         this.sendEvent(socket, { event: 'assistant.speaking.ended' });
         void this.sessionService.transition(sessionId, 'listening').catch(() => undefined);
+        this.emitAvatarState(socket, state, 'listening');
+        this.emitAssistantExpression(socket, 'listening', 'voice');
       },
-      onPendingConfirmation: (payload) => this.sendEvent(socket, { event: 'action.pending_confirmation', data: payload }),
+      onPendingConfirmation: (payload) => {
+        this.sendEvent(socket, { event: 'action.pending_confirmation', data: payload });
+        this.emitAvatarState(socket, state, 'confirming', 'voice', true);
+        this.emitAssistantExpression(socket, 'confirming', 'voice', true);
+      },
       onActionExecuted: (payload) => this.sendEvent(socket, { event: 'action.executed', data: payload }),
-      onClarificationNeeded: (payload) => this.sendEvent(socket, { event: 'action.clarification_needed', data: payload }),
+      onClarificationNeeded: (payload) => {
+        this.sendEvent(socket, { event: 'action.clarification_needed', data: payload });
+        this.emitAvatarState(socket, state, 'confirming', 'voice', true);
+      },
       onLatencyMetrics: (payload) => this.sendEvent(socket, { event: 'latency.metrics', data: payload }),
-      onError: (code, message) => this.sendEvent(socket, { event: 'error', data: { code, message } }),
+      onError: (code, message) => {
+        this.sendEvent(socket, { event: 'error', data: { code, message } });
+        this.emitAvatarState(socket, state, 'error', 'voice', false, code);
+        this.emitAssistantExpression(socket, 'error', 'voice', false, code);
+      },
     };
 
     await this.turnRunner.run(state, turn.id, generationId, transcript, { sttLatencyMs }, events);
@@ -487,11 +535,54 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       .then(() => this.sessionService.transition(sessionId, 'listening').catch(() => undefined))
       .catch(() => undefined);
     const socket = this.sockets.get(sessionId);
-    if (socket) this.sendEvent(socket, { event: 'session.interrupted' });
+    if (socket) {
+      this.sendEvent(socket, { event: 'session.interrupted' });
+      this.emitAvatarState(socket, state, 'interrupted');
+      this.emitAssistantExpression(socket, 'interrupted', 'voice');
+      this.emitAvatarState(socket, state, 'listening');
+    }
   }
 
   private sendEvent(socket: WebSocket, payload: ServerEvent): void {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(payload));
+  }
+
+  private emitAvatarState(
+    socket: WebSocket,
+    state: ReturnType<VoiceRuntimeRegistry['get']>,
+    avatarState: AvatarState,
+    channel: AvatarChannel = 'voice',
+    pendingConfirmation = false,
+    errorCode?: string,
+    connection: 'connected' | 'reconnecting' | 'disconnected' = 'connected',
+  ): void {
+    this.sendEvent(socket, {
+      event: 'avatar.state',
+      data: this.avatarState.buildState({
+        state: avatarState,
+        channel,
+        sessionId: state?.sessionId,
+        conversationId: state?.conversationId,
+        scope: state?.scope,
+        space: state?.space,
+        pendingConfirmation,
+        errorCode,
+        connection,
+      }),
+    });
+  }
+
+  private emitAssistantExpression(
+    socket: WebSocket,
+    avatarState: AvatarState,
+    channel: AvatarChannel,
+    pendingConfirmation = false,
+    errorCode?: string,
+  ): void {
+    this.sendEvent(socket, {
+      event: 'assistant.expression',
+      data: this.avatarState.buildExpression({ state: avatarState, channel, pendingConfirmation, errorCode }),
+    });
   }
 }

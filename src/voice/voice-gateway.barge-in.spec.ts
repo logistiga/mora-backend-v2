@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AvatarStateService } from '../avatar/avatar-state.service.js';
 import { VoiceGateway } from './voice.gateway.js';
 import { VoiceRuntimeRegistry } from './voice-runtime.registry.js';
 import { EndOfTurnService } from './vad/end-of-turn.service.js';
@@ -41,6 +42,7 @@ function makeGateway() {
     new EndOfTurnService(),
     conversationsService as any,
     pendingActionService as any,
+    new AvatarStateService(),
   );
 
   const state = registry.create({

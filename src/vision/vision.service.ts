@@ -34,6 +34,7 @@ export class VisionService {
 
     const conversation = await this.conversationsService.getOrCreateConversation(user.id, dto.conversationId);
     const sourceType = (dto.sourceType ?? 'upload') as VisionSourceType;
+    const channel = sourceType === 'voice_snapshot' ? 'voice_vision' : 'vision';
     const targetSpace = normalizeTargetSpace(dto.scope, dto.space);
     const analyzedAssets: { id: string; note: VisionContextNoteInput }[] = [];
 
@@ -73,7 +74,7 @@ export class VisionService {
       user: { id: user.id, email: user.email, displayName: fullUser?.displayName ?? user.email },
       message: dto.message,
       conversationId: conversation.id,
-      channel: 'vision',
+      channel,
       externalContextNotes: [visionContextSummary],
       routingOverride: {
         route: dto.scope,
@@ -81,7 +82,7 @@ export class VisionService {
         space: targetSpace,
       },
       userMessageMetadata: {
-        channel: 'vision',
+        channel,
         sourceType,
         visionAssetIds: analyzedAssets.map((asset) => asset.id),
         visionContextSummary,

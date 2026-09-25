@@ -1,8 +1,9 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase E (Tools/Actions/Permissions/Confirmations/
-Tasks/Reminders, on top of Phase A auth, Phase B router/agents/orchestrator, Phase C
-intelligent memory, and Phase C.5 AI Provider Manager).**
+**Backend phase covered by this document: Phase H (Avatar/realtime finalization, on top of
+Phase A auth, Phase B router/agents/orchestrator, Phase C intelligent memory, Phase C.5 AI
+Provider Manager, Phase D actions/confirmations, Phase E documents/connections, Phase F voice,
+and Phase G vision).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
 building Mora's frontend without re-reading the backend source. Everything here describes
 what the backend **actually does today** — nothing aspirational.
@@ -583,9 +584,11 @@ for `Document`, `DocumentDetail`, `DocumentTable`, `DocumentChunkCitation`, `Con
   send flow (§14).
 - **Connections settings overview** page (§14).
 - **Voice orb/mic button** with listening/thinking/speaking states and live latency debug
-  overlay (§16, once implemented — contracts are ready now, no frontend built yet).
+  overlay (§16).
+- **Avatar settings screen** and **voice/avatar realtime presenter** with reconnect/error states
+  and lip-sync cues (§18).
 
-## 16. Phase F — Real-Time Voice UX (contract-ready, frontend NOT built yet)
+## 16. Phase F — Real-Time Voice UX
 
 **Core principle for the UI**: voice is not a different assistant or a different conversation
 model — it's an alternate input/output modality for the exact same Mora. Design the voice
@@ -629,17 +632,12 @@ supplements) the assistant bubble," not as a separate product surface.
   panel showing the last turn's numbers is useful during development, not intended for
   end-users.
 
-### Explicitly deferred, do not build yet
+### Still deferred from the pure voice layer
 
-- Any 3D avatar, lip-sync, or facial expression rendering — `assistant.expression` exists in
-  the protocol as a hook for **Phase H** but is never emitted with real content in Phase F.
-  `assistant.speaking.started`/`ended` are safe to wire up now for a simple orb/waveform, not
-  for avatar animation.
-- A wake-word ("dis 'Mora'") always-listening mode — `mode: 'wake_word'` is accepted by the API
-  but has no real detector behind it yet (see `API_CONTRACT.md`). Build `push_to_talk` (press
-  and hold, or tap to start/stop) as the default, and `continuous_session` (mic stays open,
-  turn-taking driven entirely by server-side VAD) as a secondary option.
-- `LOVABLE_MASTER_PROMPT.md` — not generated yet, deferred to Phase H per the standing plan.
+- A wake-word ("dis 'Mora'") always-listening mode remains deferred — `mode: 'wake_word'` is
+  accepted by the API but has no real detector behind it yet (see `API_CONTRACT.md`).
+- Voice by itself does not ship a browser-side renderer; the actual avatar presentation contract
+  is described in §18.
 
 ## 17. Phase G — Vision / Multimodal UX (contract-ready, frontend NOT built yet)
 
@@ -660,6 +658,8 @@ comes from an upload, a camera snapshot, a screenshot, or later a voice-triggere
 - The backend persists a bounded `visionContextSummary` on the originating user message so later
   turns in the same conversation can reuse that image context without blindly re-uploading or
   re-sending every old image.
+- When `sourceType === 'voice_snapshot'`, the stored channel becomes `voice_vision` so the
+  frontend can blend voice, image, and avatar state in one conversation thread.
 - Scope/space isolation remains strict. A screenshot sent in `professional/logistiga` stays in
   that space; a personal image never unlocks professional context.
 - Visual prompt injection is treated exactly like document prompt injection: text seen inside an
@@ -682,9 +682,9 @@ comes from an upload, a camera snapshot, a screenshot, or later a voice-triggere
   - keep using the returned `conversationId` for follow-up turns, including plain text turns.
 - Treat `sourceType` as UX metadata, not business logic:
   `upload`, `camera`, `screenshot`, `voice_snapshot`, `document`.
-- For a future Voice + Vision surface, the frontend can capture a snapshot and call
-  `/vision/analyze` with `sourceType: "voice_snapshot"`, then let the existing voice layer read
-  the returned answer aloud. Do **not** invent a parallel voice-vision backend.
+- For Voice + Vision, the frontend can capture a snapshot and call `/vision/analyze` with
+  `sourceType: "voice_snapshot"`, then let the existing voice/avatar layer render the resulting
+  `voice_vision` turn. Do **not** invent a parallel voice-vision backend.
 
 ### Suggested client flow (React / TanStack style)
 
@@ -724,22 +724,84 @@ comes from an upload, a camera snapshot, a screenshot, or later a voice-triggere
 See `API_CONTRACT.md`'s Vision section and `TYPES.md` for `VisionAsset`, `VisionStatus`,
 `VisionAnalyzeResponse`, and `VisionSourceType`.
 
-## 18. Explicitly NOT available yet (do not build UI for these)
+## 18. Phase H — Avatar / Realtime Presentation UX
+
+**Core principle for the UI**: avatar is a presentation layer driven by Mora's existing state,
+not a second character with its own autonomy. The frontend should animate Mora from backend
+signals, not infer behavior from raw text.
+
+### What the backend actually does
+
+- `GET /avatar/profile` returns or lazily creates a per-user avatar profile with preferences like
+  `renderMode`, `baseExpression`, `lipSyncMode`, `voiceSyncEnabled`, `idleEnabled`, and
+  `reducedMotion`.
+- `PATCH /avatar/profile` lets the frontend persist those preferences.
+- `GET /avatar/status` exposes the realtime contract: WebSocket path, supported avatar events,
+  feature flags, privacy guarantees, and optional avatar-provider resolution.
+- The voice WebSocket now emits deterministic `avatar.state`, `assistant.expression`, and
+  `avatar.lipsync` events during listening, thinking, speaking, confirmations, interrupts,
+  errors, reconnects, and session end.
+- Lip-sync is **estimated** from Mora's response text via viseme timelines, not sampled from a
+  phoneme provider.
+- Vision-triggered voice snapshots are tagged `channel: "voice_vision"` so the avatar can react
+  differently when the assistant is reasoning over an image during a voice flow.
+
+### Frontend should build
+
+- A lightweight **Avatar Settings** screen:
+  - load `GET /avatar/profile`,
+  - edit `renderMode`, `baseExpression`, `expressionIntensity`, `lipSyncMode`,
+    `voiceSyncEnabled`, `idleEnabled`, `reducedMotion`,
+  - persist with `PATCH /avatar/profile`.
+- A reusable **AvatarPresenter** component driven by realtime events:
+  - `avatar.state` controls the high-level state machine,
+  - `assistant.expression` controls expression swaps/intensity,
+  - `avatar.lipsync` drives mouth/viseme timing when audio is playing.
+- A **reconnect/error banner** integrated with the presenter:
+  - `connection: 'reconnecting'` should visibly pause or soften animation,
+  - `state: 'error'` should switch to an error expression without pretending everything is fine,
+  - `state: 'disconnected'` should settle to an idle/offline state.
+- A **multimodal overlay** for `channel: 'voice_vision'` turns:
+  - keep the same conversation thread,
+  - optionally show a compact "snapshot analyzed" badge/card,
+  - switch the avatar to the backend-provided `vision_focus` expression when present.
+- Respect accessibility and user intent:
+  - `reducedMotion: true` should dampen animation amplitude and transitions,
+  - `voiceSyncEnabled: false` should ignore `avatar.lipsync`,
+  - `idleEnabled: false` should avoid ambient looping when Mora is inactive.
+
+### Recommended rendering behavior
+
+- `listening` -> attentive, low-intensity idle motion.
+- `thinking` -> focused animation; if `channel` is `vision` or `voice_vision`, prefer a visual
+  "analysis/focus" treatment instead of normal speaking emphasis.
+- `speaking` -> play audio + lip-sync together; stop mouth animation on `assistant.speaking.ended`.
+- `confirming` -> hold a stable confirmation pose while the confirmation card is shown.
+- `interrupted` -> briefly acknowledge interruption, then smoothly return to listening.
+- `paused` -> freeze or reduce motion rather than showing a dead/disconnected state.
+
+### Important boundaries
+
+- Do not invent hidden capture, autonomous camera use, or background screen monitoring.
+- Do not infer approvals or state changes from image text; only backend events authorize actions.
+- Do not invent extra realtime channels; `/voice/ws` remains the single realtime transport.
+- Do not promise true phoneme-perfect lip-sync; the backend contract is intentionally estimated.
+
+## 19. Explicitly NOT available yet (do not build UI for these)
 
 Real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta Cloud
 WhatsApp provider (only Evolution API is implemented, and only at contract/mock-test level —
 see the Phase E final report), a public document or vision-asset download/preview URL
 (`storageKey` is internal only), real LogistiGA/Piston database access (fixture/contract-level
-only in Phase E), a real wake-word ("dis 'Mora'") detector, a 3D avatar/lip-sync/facial
-expression UI, n8n, conversation titles/rename/delete, pagination, per-space permissions, a
+only in Phase E), a real wake-word ("dis 'Mora'") detector, a shipped browser 3D scene/asset
+pack for the avatar (the backend contract exists, the renderer is still a frontend concern), n8n, conversation titles/rename/delete, pagination, per-space permissions, a
 working cross-scope toggle, password reset, audit log UI, a memory delete button, a manual
 "supersede" action, POST/PATCH for profile-facts or entities, a "reveal API key"/"reveal
 credentials" feature (doesn't exist server-side, for any connector), vision/image provider
 testing, real per-complexity/route model switching, any N3/N4-level tool (the security levels
 are enforced end-to-end but no phase ships a concrete tool at those levels),
 multi-step/chained tool calls in one turn (e.g. "complete my task called X" requires knowing
-the task's id — the LLM does not automatically look it up first), `LOVABLE_MASTER_PROMPT.md`
-(deferred to Phase H), and any notification channel other than the in-app list (no email/push/
+the task's id — the LLM does not automatically look it up first), and any notification channel other than the in-app list (no email/push/
 WhatsApp delivery of a reminder yet).
 
 ---
@@ -751,7 +813,6 @@ all three at the end of every remaining phase (F, G, H) to reflect the real, shi
 backend state, the same way this document was updated for Phase E (on top of what Phase D
 wrote). Never let them describe a feature that isn't actually implemented yet.
 
-At **Phase H**, these three documents (accumulated across all phases) will be used to
-generate `docs/frontend/LOVABLE_MASTER_PROMPT.md` — a single consolidated prompt handing the
-full, final backend contract to Lovable (or an equivalent frontend-generation agent) to build
-the complete Mora frontend in one pass.
+These three documents now feed `docs/frontend/LOVABLE_MASTER_PROMPT.md` — the consolidated
+frontend-generation prompt reflecting the full final backend contract. Keep all four files in
+sync whenever the backend contract changes.

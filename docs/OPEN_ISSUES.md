@@ -31,6 +31,36 @@ Ce document suit les points encore ouverts qui ne bloquent pas l'avancement du b
   - cleanup reconnect / remount / StrictMode
   - purge de queue audio a l'interruption
 
+## Phase H — Avatar / Voice-Vision presentation
+
+### 5. Rendu avatar frontend reel encore a valider humainement
+- Le backend expose maintenant les endpoints `/avatar/profile`, `/avatar/status` et les evenements realtime
+  `avatar.state`, `assistant.expression`, `avatar.lipsync`.
+- Le depot courant ne contient pas encore un renderer frontend final versionne ici.
+- Un test humain final reste necessaire pour valider la lisibilite, la fluidite et la coherence visuelle
+  du presenter avatar cote navigateur.
+
+### 6. Lip-sync estime a valider en perception reelle
+- Le contrat actuel est volontairement heuristique (`viseme_timeline` estime depuis le texte),
+  pas un alignement phonemique provider.
+- Les tests automatises couvrent la structure, les bornes et la stabilite du payload.
+- Un test humain final reste necessaire pour juger si le rendu visuel est suffisamment naturel
+  ou s'il faut reduire l'intensite / lisser le rythme cote frontend.
+
+### 7. Reconnexion realtime avatar a revalider sur frontend reel
+- Le backend emet maintenant un etat `connection: reconnecting` lors du rattachement a une session voice
+  deja active.
+- La partie navigateur doit encore etre testee humainement pour verifier :
+  - reprise propre de l'UI sans duplication d'evenements
+  - gel/reprise correcte des animations
+  - absence de desynchronisation audio/avatar apres reconnexion
+
+### 8. Voice + Vision + Avatar UX finale a valider humainement
+- Le backend supporte `sourceType = voice_snapshot` avec canal `voice_vision`.
+- Les tests backend couvrent la structure contractuelle et l'isolation de contexte.
+- Un test humain final reste necessaire pour juger la qualite UX d'un enchainement :
+  question vocale -> snapshot explicite -> reponse multimodale -> animation avatar.
+
 ## Rappel de stabilisation finale
 
 Les points ci-dessus ne doivent pas etre oublies pendant la stabilisation finale de Mora v2 :
@@ -38,3 +68,7 @@ Les points ci-dessus ne doivent pas etre oublies pendant la stabilisation finale
 - changement de sujet apres interruption
 - stabilite STT francais
 - validation frontend/browser du canal voice
+- rendu avatar frontend reel
+- perception lip-sync reelle
+- reconnexion realtime avatar
+- UX voice + vision + avatar

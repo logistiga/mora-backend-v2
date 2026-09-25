@@ -19,7 +19,7 @@ export interface OrchestratorInput {
   user: AgentUser;
   message: string;
   conversationId?: string;
-  channel?: 'text' | 'voice' | 'vision';
+  channel?: 'text' | 'voice' | 'vision' | 'voice_vision';
   recentInterruption?: boolean;
   externalContextNotes?: string[];
   userMessageMetadata?: Record<string, unknown>;
@@ -170,7 +170,7 @@ export class MoraOrchestratorService {
     message: string,
     decision: RouterDecisionResult,
     conversationId: string,
-    channel: 'text' | 'voice' | 'vision',
+    channel: 'text' | 'voice' | 'vision' | 'voice_vision',
     recentInterruption: boolean,
     externalContextNotes: string[],
   ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {

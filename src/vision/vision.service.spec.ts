@@ -72,4 +72,60 @@ describe('VisionService', () => {
     expect(result.conversationId).toBe('conv-1');
     expect(result.assets).toHaveLength(1);
   });
+
+  it('marks voice-triggered snapshots as voice_vision turns', async () => {
+    const conversationsService = { getOrCreateConversation: vi.fn(async () => ({ id: 'conv-1' })) };
+    const usersService = { findById: vi.fn(async () => ({ id: 'u1', displayName: 'Omar' })) };
+    const visionAssets = {
+      getLimits: vi.fn(() => ({ maxUploadBytes: 10485760, maxFiles: 4 })),
+      createOrReuse: vi.fn(async () => ({
+        asset: {
+          id: 'asset-2',
+          status: 'analyzed',
+          summary: 'Une etiquette est visible.',
+          extractedText: 'Jean Dupont',
+          analysis: { structuredData: { client: 'Jean Dupont' } },
+          originalFilename: 'snapshot.png',
+          width: 1,
+          height: 1,
+        },
+      })),
+      attachToMessage: vi.fn(async () => undefined),
+    };
+    const orchestrator = {
+      handleMessage: vi.fn(async () => ({
+        conversationId: 'conv-1',
+        userMessageId: 'msg-user-2',
+        messageId: 'msg-assistant-2',
+        response: 'Je vois une etiquette.',
+        route: 'personal',
+        scope: 'personal',
+        space: 'personal',
+        confidence: 0.95,
+      })),
+    };
+
+    const service = new VisionService(
+      conversationsService as never,
+      usersService as never,
+      visionAssets as never,
+      {} as never,
+      { resolve: vi.fn(async () => null) } as never,
+      orchestrator as never,
+      { log: vi.fn(async () => undefined) } as never,
+    );
+
+    await service.analyze(
+      { id: 'u1', email: 'user@example.com' } as never,
+      { message: 'Lis-moi ceci.', scope: 'personal', space: 'personal', sourceType: 'voice_snapshot' },
+      [{ originalname: 'snapshot.png', buffer: PNG_1X1 }] as Express.Multer.File[],
+    );
+
+    expect(orchestrator.handleMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'voice_vision',
+        userMessageMetadata: expect.objectContaining({ channel: 'voice_vision', sourceType: 'voice_snapshot' }),
+      }),
+    );
+  });
 });
