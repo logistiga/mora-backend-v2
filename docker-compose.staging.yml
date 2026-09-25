@@ -52,9 +52,12 @@ services:
       - .env.staging
     environment:
       NODE_ENV: production
-      POSTGRES_HOST: postgres
-      REDIS_HOST: redis
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      # Fully-qualified container names, never the bare service names: the API
+      # also sits on the shared `coolify` network, where `postgres`/`redis`
+      # already resolve to other stacks' containers.
+      POSTGRES_HOST: mora-v2-staging-postgres
+      REDIS_HOST: mora-v2-staging-redis
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mora-v2-staging-postgres:5432/${POSTGRES_DB}?schema=public
     volumes:
       - documents_data:/app/storage/documents
     depends_on:
@@ -90,7 +93,7 @@ services:
     env_file:
       - .env.staging
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mora-v2-staging-postgres:5432/${POSTGRES_DB}?schema=public
     command: ['npx', 'prisma', 'migrate', 'deploy']
     depends_on:
       postgres:
