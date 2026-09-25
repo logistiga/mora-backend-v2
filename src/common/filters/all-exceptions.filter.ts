@@ -15,6 +15,7 @@ interface ErrorResponseBody {
   method: string;
   message: string | string[];
   error?: string;
+  requestId?: string;
 }
 
 /**
@@ -45,15 +46,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
       path: request.url,
       method: request.method,
       message,
+      requestId: (request as Request & { id?: string }).id,
     };
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
-        `${request.method} ${request.url} -> ${status}`,
+        `${request.method} ${request.url} -> ${status} [${body.requestId ?? '-'}]`,
         exception instanceof Error ? exception.stack : String(exception),
       );
     } else {
-      this.logger.warn(`${request.method} ${request.url} -> ${status}`);
+      this.logger.warn(
+        `${request.method} ${request.url} -> ${status} [${body.requestId ?? '-'}]`,
+      );
     }
 
     response.status(status).json(body);

@@ -36,6 +36,12 @@ export class EnvironmentVariables {
   @IsString()
   CORS_ORIGIN: string = 'http://localhost:3000';
 
+  // Opt Swagger in (staging) or out (any environment) independently of
+  // NODE_ENV; absent means "served outside production only".
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  MORA_SWAGGER_ENABLED?: string;
+
   @IsString()
   POSTGRES_USER: string;
 

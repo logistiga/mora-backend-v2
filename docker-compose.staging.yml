@@ -1,0 +1,114 @@
+# Staging deployment (mora-v2-staging.logistiga.tech).
+#
+# Fully isolated from Mora v1 and from local dev: own compose project, own
+# container names, own volumes and own internal network. The API additionally
+# joins the external `coolify` network so the host's Traefik can route
+# HTTPS/WSS traffic to it.
+#
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up -d --build
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mora-v2-staging-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mora-v2-staging-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mora-v2-staging-api:latest
+    container_name: mora-v2-staging-api
+    restart: unless-stopped
+    env_file:
+      - .env.staging
+    environment:
+      NODE_ENV: production
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    volumes:
+      - documents_data:/app/storage/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+      - coolify
+    # No published host port: the only way in is Traefik over 443.
+    labels:
+      traefik.enable: 'true'
+      traefik.docker.network: coolify
+      traefik.http.routers.mora-v2-staging-http.entrypoints: http
+      traefik.http.routers.mora-v2-staging-http.rule: Host(`${STAGING_HOST}`)
+      traefik.http.routers.mora-v2-staging-http.middlewares: redirect-to-https@file
+      traefik.http.routers.mora-v2-staging-https.entrypoints: https
+      traefik.http.routers.mora-v2-staging-https.rule: Host(`${STAGING_HOST}`)
+      traefik.http.routers.mora-v2-staging-https.tls: 'true'
+      traefik.http.routers.mora-v2-staging-https.tls.certresolver: letsencrypt
+      traefik.http.services.mora-v2-staging.loadbalancer.server.port: '3000'
+
+  # One-off migration runner (build stage: has the Prisma CLI and the schema).
+  #   docker compose -f docker-compose.staging.yml --env-file .env.staging \
+  #     --profile migrate run --rm migrate
+  migrate:
+    profiles: ['migrate']
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    env_file:
+      - .env.staging
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+    command: ['npx', 'prisma', 'migrate', 'deploy']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+networks:
+  internal:
+    name: mora-v2-staging-internal
+    driver: bridge
+  coolify:
+    external: true
+
+volumes:
+  postgres_data:
+    name: mora-v2-staging-postgres-data
+  redis_data:
+    name: mora-v2-staging-redis-data
+  documents_data:
+    name: mora-v2-staging-documents-data
