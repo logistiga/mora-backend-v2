@@ -11,6 +11,14 @@ what the backend **actually does today** — nothing aspirational.
 See also: [`API_CONTRACT.md`](API_CONTRACT.md) (endpoint-by-endpoint reference) and
 [`TYPES.md`](TYPES.md) (TypeScript shapes for every response).
 
+**Live staging backend:** `https://mora-v2-staging.logistiga.tech/api/v1`, websocket
+`wss://mora-v2-staging.logistiga.tech/voice/ws`.
+
+**Capability detection:** `GET /ai-providers/status` is authoritative for **chat and embedding
+only**. It reports `vision/stt/tts = false` whenever there is no dedicated provider row, even
+though those capabilities work through the SYSTEM chat provider's fallback. Use
+`GET /vision/status?scope=&space=` for vision and `GET /voice/status` for STT/TTS.
+
 ---
 
 ## 1. Authentication (Phase A)

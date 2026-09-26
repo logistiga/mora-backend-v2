@@ -1,6 +1,8 @@
 # API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G + Phase H)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
+Base URL (staging): `https://mora-v2-staging.logistiga.tech/api/v1` — websocket
+`wss://mora-v2-staging.logistiga.tech/voice/ws`, Swagger `/docs`, OpenAPI `/docs-json`.
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
 
 **Global error shape** (from `AllExceptionsFilter`, applies to every endpoint below):
