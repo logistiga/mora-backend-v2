@@ -1,14 +1,23 @@
 # Frontend Handoff — Mora Backend v2
 
-**Backend phase covered by this document: Phase E (Tools/Actions/Permissions/Confirmations/
-Tasks/Reminders, on top of Phase A auth, Phase B router/agents/orchestrator, Phase C
-intelligent memory, and Phase C.5 AI Provider Manager).**
+**Backend phase covered by this document: Phase H (Avatar/realtime finalization, on top of
+Phase A auth, Phase B router/agents/orchestrator, Phase C intelligent memory, Phase C.5 AI
+Provider Manager, Phase D actions/confirmations, Phase E documents/connections, Phase F voice,
+and Phase G vision).**
 Written so another AI agent (Lovable, Claude Code, or a human frontend dev) can start
 building Mora's frontend without re-reading the backend source. Everything here describes
 what the backend **actually does today** — nothing aspirational.
 
 See also: [`API_CONTRACT.md`](API_CONTRACT.md) (endpoint-by-endpoint reference) and
 [`TYPES.md`](TYPES.md) (TypeScript shapes for every response).
+
+**Live staging backend:** `https://mora-v2-staging.logistiga.tech/api/v1`, websocket
+`wss://mora-v2-staging.logistiga.tech/voice/ws`.
+
+**Capability detection:** `GET /ai-providers/status` is authoritative for **chat and embedding
+only**. It reports `vision/stt/tts = false` whenever there is no dedicated provider row, even
+though those capabilities work through the SYSTEM chat provider's fallback. Use
+`GET /vision/status?scope=&space=` for vision and `GET /voice/status` for STT/TTS.
 
 ---
 
@@ -26,10 +35,13 @@ token). No social login. No password reset flow yet.
   force logout and return to the Login screen.
 - Refresh token rotates on every use — **always replace the stored refresh token with the
   one returned by `/auth/refresh`** (the old one becomes invalid immediately).
+- Preserve `X-Request-Id` from failing API responses; show/copy it in debug UI and include it
+  when creating a backend bug report.
 
 **Loading / empty / error states:** standard form loading spinner on submit; show the
 `message` field from error responses (e.g. "Invalid credentials", "A user with this email
 already exists") directly — they're already user-presentable French/English short strings.
+Also keep `requestId` available in a collapsible debug section or a copy button.
 
 **Not available yet:** password reset, email verification, 2FA, social login, "remember me"
 beyond the refresh token's own 7-day lifetime.
@@ -302,6 +314,22 @@ The backend now supports a "Paramètres → IA & API" settings page: multiple AI
 scoped to a usage kind (chat, embedding, and — reserved for later — vision/stt/tts/image/
 avatar), with encrypted keys and a real test-connection call.
 
+### SYSTEM providers vs BYOK (read this first)
+- Mora can supply **SYSTEM providers** (`isSystem: true`, `owner: "system"`): shared,
+  centrally-managed credentials stored encrypted in the same table with no owner. **A user
+  therefore never has to enter an API key to use Mora** — chat, embedding, vision and voice
+  work out of the box whenever a SYSTEM provider exists for that kind.
+- A user may still add their own provider (**BYOK**, `isSystem: false`). It is optional and it
+  always **overrides** the SYSTEM one: resolution is *user provider → system provider → not
+  configured*, ownership being checked before scope/space specificity.
+- For a standard user, SYSTEM rows are **read-only**: they appear in `GET /ai-providers` with
+  `keyHint: null`, and any write (`PATCH`, `enable`/`disable`, `set-default`, `test`, `DELETE`)
+  on them returns `403`. Hide those actions when `isSystem === true` and the user isn't ADMIN.
+- An **ADMIN** manages them through the dedicated routes `/api/v1/ai-providers/system/*`
+  (same shapes; `403` for everyone else). Build that screen only behind an admin role check.
+- `GET /ai-providers/status` tells you which one is actually in play per kind:
+  `sources[kind]` ∈ `user | system | none`, and `defaults[kind].source` likewise.
+
 ### What the backend actually does
 - A provider is a row the user creates: a display `name`, a `provider` string (openai,
   anthropic, groq, deepseek, gemini, mistral, openrouter, ollama,
@@ -330,6 +358,8 @@ avatar), with encrypted keys and a real test-connection call.
 - **Provider list**: grouped by `kind` (tabs or sections: Chat, Embedding, ...), each row
   showing `name`, `provider`, `model`, a scope/space badge (or "Global" if both null), an
   active/inactive toggle, a "Default" indicator, and `keyHint` (e.g. "Clé : ••••7890").
+  SYSTEM rows (`isSystem: true`) get a "Fourni par Mora" badge, no key hint, and no action
+  buttons for a non-admin — with a hint that adding a personal key will override it.
 - **Create/edit form**: name, provider (free-text or a dropdown of the known values with a
   "custom" option), kind, model, base URL (optional), API key (optional — a password-style
   input, write-only: never pre-filled on edit, only ever sent when the user wants to rotate it),
@@ -342,16 +372,18 @@ avatar), with encrypted keys and a real test-connection call.
 - **Delete**: `DELETE /:id` — since this is a real hard delete, a confirmation dialog is
   warranted (unlike Memory's archive, which is reversible).
 - **Status/overview widget** (e.g. at the top of the "IA & API" page, or in a general Settings
-  overview): `GET /ai-providers/status` → render each kind's configured/not state and its
+  overview): `GET /ai-providers/status` → render each kind's configured/not state, its
+  source (`user` = "votre clé", `system` = "fourni par Mora", `none` = non configuré), and its
   current default (name/provider/model) — good for an at-a-glance "Chat: ✅ OpenAI (gpt-4o-mini)
   · Embedding: ❌ not configured" summary.
 
 ### Loading / empty / error states
 - **Loading**: standard list/form skeletons; the test-connection button should show its own
   inline spinner (it makes a real network call to the provider and can take a few seconds).
-- **Empty**: a new user has zero providers — the whole app still works (Direct routing, and
-  graceful "not configured" replies elsewhere), so this is a normal state, not an error. Show a
-  prompt to add a first provider, not a blocking error.
+- **Empty**: a new user has zero *personal* providers — that is the normal state, not an error,
+  and not a blocker at onboarding: never force a key entry. If `sources[kind]` is `system`,
+  show "Fourni par Mora" with an optional "utiliser ma propre clé" action; only when it is
+  `none` should the UI say the capability is unavailable.
 - **Error**: `400` (validation — e.g. invalid `baseUrl`, empty `model`), `401` (session
   expired), `403`/`404` (not this user's provider, or unknown id). A failed `/test` call is
   **not** an HTTP error — it's a `200`/`201` with `{ success: false, message }`; render that
@@ -583,9 +615,11 @@ for `Document`, `DocumentDetail`, `DocumentTable`, `DocumentChunkCitation`, `Con
   send flow (§14).
 - **Connections settings overview** page (§14).
 - **Voice orb/mic button** with listening/thinking/speaking states and live latency debug
-  overlay (§16, once implemented — contracts are ready now, no frontend built yet).
+  overlay (§16).
+- **Avatar settings screen** and **voice/avatar realtime presenter** with reconnect/error states
+  and lip-sync cues (§18).
 
-## 16. Phase F — Real-Time Voice UX (contract-ready, frontend NOT built yet)
+## 16. Phase F — Real-Time Voice UX
 
 **Core principle for the UI**: voice is not a different assistant or a different conversation
 model — it's an alternate input/output modality for the exact same Mora. Design the voice
@@ -629,35 +663,176 @@ supplements) the assistant bubble," not as a separate product surface.
   panel showing the last turn's numbers is useful during development, not intended for
   end-users.
 
-### Explicitly deferred, do not build yet
+### Still deferred from the pure voice layer
 
-- Any 3D avatar, lip-sync, or facial expression rendering — `assistant.expression` exists in
-  the protocol as a hook for **Phase H** but is never emitted with real content in Phase F.
-  `assistant.speaking.started`/`ended` are safe to wire up now for a simple orb/waveform, not
-  for avatar animation.
-- A wake-word ("dis 'Mora'") always-listening mode — `mode: 'wake_word'` is accepted by the API
-  but has no real detector behind it yet (see `API_CONTRACT.md`). Build `push_to_talk` (press
-  and hold, or tap to start/stop) as the default, and `continuous_session` (mic stays open,
-  turn-taking driven entirely by server-side VAD) as a secondary option.
-- `LOVABLE_MASTER_PROMPT.md` — not generated yet, deferred to Phase H per the standing plan.
+- A wake-word ("dis 'Mora'") always-listening mode remains deferred — `mode: 'wake_word'` is
+  accepted by the API but has no real detector behind it yet (see `API_CONTRACT.md`).
+- Voice by itself does not ship a browser-side renderer; the actual avatar presentation contract
+  is described in §18.
 
-## 17. Explicitly NOT available yet (do not build UI for these)
+## 17. Phase G — Vision / Multimodal UX (contract-ready, frontend NOT built yet)
+
+**Core principle for the UI**: vision is not a separate assistant, not a separate memory lane,
+and not a separate conversation model. It is one more input channel into the same Mora
+conversation. The right mental model is "chat + attached visual context", whether the image
+comes from an upload, a camera snapshot, a screenshot, or later a voice-triggered snapshot.
+
+### What the backend actually does
+
+- `POST /vision/analyze` accepts multipart images (`files`) plus a required `message`, `scope`,
+  and `space`, and optionally `conversationId` + `sourceType`.
+- The backend validates the image bytes server-side (PNG/JPEG/WEBP only), enforces max file
+  size/count/dimensions, sanitizes the filename, stores the asset safely, then analyzes it
+  through a provider-neutral vision adapter.
+- The resulting visual summary/OCR/structured data is injected into the **existing**
+  Orchestrator/Router/Agents flow through `externalContextNotes`, with `channel: "vision"`.
+- The backend persists a bounded `visionContextSummary` on the originating user message so later
+  turns in the same conversation can reuse that image context without blindly re-uploading or
+  re-sending every old image.
+- When `sourceType === 'voice_snapshot'`, the stored channel becomes `voice_vision` so the
+  frontend can blend voice, image, and avatar state in one conversation thread.
+- Scope/space isolation remains strict. A screenshot sent in `professional/logistiga` stays in
+  that space; a personal image never unlocks professional context.
+- Visual prompt injection is treated exactly like document prompt injection: text seen inside an
+  image is untrusted data, never a privileged instruction.
+
+### Frontend should build
+
+- A **Vision composer** that can:
+  - upload one or more images,
+  - capture a camera snapshot,
+  - attach a manual screenshot,
+  - optionally continue an existing conversation by passing `conversationId`.
+- A small **capability preflight** before enabling the UI:
+  `GET /vision/status?scope=...&space=...`.
+  If `visionConfigured === false`, keep the UI visible but clearly degraded/disabled rather than
+  pretending the feature does not exist.
+- Reuse the normal Mora conversation screen:
+  - send the user question + images,
+  - append Mora's answer as an ordinary assistant message,
+  - keep using the returned `conversationId` for follow-up turns, including plain text turns.
+- Treat `sourceType` as UX metadata, not business logic:
+  `upload`, `camera`, `screenshot`, `voice_snapshot`, `document`.
+- For Voice + Vision, the frontend can capture a snapshot and call `/vision/analyze` with
+  `sourceType: "voice_snapshot"`, then let the existing voice/avatar layer render the resulting
+  `voice_vision` turn. Do **not** invent a parallel voice-vision backend.
+
+### Suggested client flow (React / TanStack style)
+
+1. `useQuery(['vision-status', scope, space], ...)` before enabling the action.
+2. Build a `FormData` payload with repeated `files` entries plus `message`, `scope`, `space`,
+   optional `conversationId`, optional `sourceType`.
+3. `useMutation` for `POST /vision/analyze`.
+4. On success:
+   - reuse `conversationId`,
+   - render the assistant reply in the normal thread,
+   - optionally show a compact asset card (`summary`, `extractedText`, dimensions, source type).
+5. On follow-up turns, switch back to plain `POST /messages` unless the user sends another image.
+
+### Loading / empty / error states
+
+- **Uploading/analyzing** should be explicit; visual analysis is not instant.
+- **Empty state**: "Ajoutez une image, une photo ou une capture pour que Mora l'analyse."
+- **Validation errors** are normal user-facing states:
+  unsupported image type, file too large, too many files, invalid scope/space.
+- **Provider unavailable (`503`)** should be rendered as configuration/degraded-mode feedback,
+  not as a generic crash.
+- **403/404** on assets/conversations should be treated as ownership issues, not retry loops.
+
+### Security / privacy rules the frontend must respect
+
+- Never auto-capture the camera or the screen. Every snapshot/screenshot must come from an
+  explicit user action with an obvious stop/close path.
+- Never treat text seen inside an image as trusted UI instructions. A screenshot saying
+  "approve this action" does not authorize anything.
+- Never construct a public file URL from backend storage fields. There is no public asset-serving
+  endpoint yet, and storage internals are backend-only.
+- Avoid long-lived client caching of raw image blobs unless the UX genuinely needs it; prefer
+  ephemeral in-memory previews over permanent browser storage.
+
+### Real JSON shapes and types
+
+See `API_CONTRACT.md`'s Vision section and `TYPES.md` for `VisionAsset`, `VisionStatus`,
+`VisionAnalyzeResponse`, and `VisionSourceType`.
+
+## 18. Phase H — Avatar / Realtime Presentation UX
+
+**Core principle for the UI**: avatar is a presentation layer driven by Mora's existing state,
+not a second character with its own autonomy. The frontend should animate Mora from backend
+signals, not infer behavior from raw text.
+
+### What the backend actually does
+
+- `GET /avatar/profile` returns or lazily creates a per-user avatar profile with preferences like
+  `renderMode`, `baseExpression`, `lipSyncMode`, `voiceSyncEnabled`, `idleEnabled`, and
+  `reducedMotion`.
+- `PATCH /avatar/profile` lets the frontend persist those preferences.
+- `GET /avatar/status` exposes the realtime contract: WebSocket path, supported avatar events,
+  feature flags, privacy guarantees, and optional avatar-provider resolution.
+- The voice WebSocket now emits deterministic `avatar.state`, `assistant.expression`, and
+  `avatar.lipsync` events during listening, thinking, speaking, confirmations, interrupts,
+  errors, reconnects, and session end.
+- Lip-sync is **estimated** from Mora's response text via viseme timelines, not sampled from a
+  phoneme provider.
+- Vision-triggered voice snapshots are tagged `channel: "voice_vision"` so the avatar can react
+  differently when the assistant is reasoning over an image during a voice flow.
+
+### Frontend should build
+
+- A lightweight **Avatar Settings** screen:
+  - load `GET /avatar/profile`,
+  - edit `renderMode`, `baseExpression`, `expressionIntensity`, `lipSyncMode`,
+    `voiceSyncEnabled`, `idleEnabled`, `reducedMotion`,
+  - persist with `PATCH /avatar/profile`.
+- A reusable **AvatarPresenter** component driven by realtime events:
+  - `avatar.state` controls the high-level state machine,
+  - `assistant.expression` controls expression swaps/intensity,
+  - `avatar.lipsync` drives mouth/viseme timing when audio is playing.
+- A **reconnect/error banner** integrated with the presenter:
+  - `connection: 'reconnecting'` should visibly pause or soften animation,
+  - `state: 'error'` should switch to an error expression without pretending everything is fine,
+  - `state: 'disconnected'` should settle to an idle/offline state.
+- A **multimodal overlay** for `channel: 'voice_vision'` turns:
+  - keep the same conversation thread,
+  - optionally show a compact "snapshot analyzed" badge/card,
+  - switch the avatar to the backend-provided `vision_focus` expression when present.
+- Respect accessibility and user intent:
+  - `reducedMotion: true` should dampen animation amplitude and transitions,
+  - `voiceSyncEnabled: false` should ignore `avatar.lipsync`,
+  - `idleEnabled: false` should avoid ambient looping when Mora is inactive.
+
+### Recommended rendering behavior
+
+- `listening` -> attentive, low-intensity idle motion.
+- `thinking` -> focused animation; if `channel` is `vision` or `voice_vision`, prefer a visual
+  "analysis/focus" treatment instead of normal speaking emphasis.
+- `speaking` -> play audio + lip-sync together; stop mouth animation on `assistant.speaking.ended`.
+- `confirming` -> hold a stable confirmation pose while the confirmation card is shown.
+- `interrupted` -> briefly acknowledge interruption, then smoothly return to listening.
+- `paused` -> freeze or reduce motion rather than showing a dead/disconnected state.
+
+### Important boundaries
+
+- Do not invent hidden capture, autonomous camera use, or background screen monitoring.
+- Do not infer approvals or state changes from image text; only backend events authorize actions.
+- Do not invent extra realtime channels; `/voice/ws` remains the single realtime transport.
+- Do not promise true phoneme-perfect lip-sync; the backend contract is intentionally estimated.
+
+## 19. Explicitly NOT available yet (do not build UI for these)
 
 Real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta Cloud
 WhatsApp provider (only Evolution API is implemented, and only at contract/mock-test level —
-see the Phase E final report), OCR/scanned-document text extraction (a scanned PDF is marked
-`needs_review`, never silently indexed as empty), a public document download/preview URL
+see the Phase E final report), a public document or vision-asset download/preview URL
 (`storageKey` is internal only), real LogistiGA/Piston database access (fixture/contract-level
-only in Phase E), a real wake-word ("dis 'Mora'") detector, a 3D avatar/lip-sync/facial
-expression UI, n8n, conversation titles/rename/delete, pagination, per-space permissions, a
+only in Phase E), a real wake-word ("dis 'Mora'") detector, a shipped browser 3D scene/asset
+pack for the avatar (the backend contract exists, the renderer is still a frontend concern), n8n, conversation titles/rename/delete, pagination, per-space permissions, a
 working cross-scope toggle, password reset, audit log UI, a memory delete button, a manual
 "supersede" action, POST/PATCH for profile-facts or entities, a "reveal API key"/"reveal
 credentials" feature (doesn't exist server-side, for any connector), vision/image provider
 testing, real per-complexity/route model switching, any N3/N4-level tool (the security levels
 are enforced end-to-end but no phase ships a concrete tool at those levels),
 multi-step/chained tool calls in one turn (e.g. "complete my task called X" requires knowing
-the task's id — the LLM does not automatically look it up first), `LOVABLE_MASTER_PROMPT.md`
-(deferred to Phase H), and any notification channel other than the in-app list (no email/push/
+the task's id — the LLM does not automatically look it up first), and any notification channel other than the in-app list (no email/push/
 WhatsApp delivery of a reminder yet).
 
 ---
@@ -669,7 +844,6 @@ all three at the end of every remaining phase (F, G, H) to reflect the real, shi
 backend state, the same way this document was updated for Phase E (on top of what Phase D
 wrote). Never let them describe a feature that isn't actually implemented yet.
 
-At **Phase H**, these three documents (accumulated across all phases) will be used to
-generate `docs/frontend/LOVABLE_MASTER_PROMPT.md` — a single consolidated prompt handing the
-full, final backend contract to Lovable (or an equivalent frontend-generation agent) to build
-the complete Mora frontend in one pass.
+These three documents now feed `docs/frontend/LOVABLE_MASTER_PROMPT.md` — the consolidated
+frontend-generation prompt reflecting the full final backend contract. Keep all four files in
+sync whenever the backend contract changes.

@@ -78,11 +78,13 @@ export type ServerToClientEventType =
   | 'session.ready' // { sessionId, state, protocolVersion }
   | 'transcript.partial' // { text } — UI display only, never triggers the Orchestrator
   | 'transcript.final' // { text, turnId }
+  | 'avatar.state' // { state, expression, intensity, channel, ... }
+  | 'avatar.lipsync' // { mode, cues[], durationMs } — estimated timeline, not provider phonemes
   | 'assistant.thinking.started'
-  | 'assistant.speaking.started' // prepared for Phase H avatar sync — no avatar logic here
+  | 'assistant.speaking.started'
   | 'audio.out.chunk' // binary TTS audio frame
   | 'assistant.speaking.ended'
-  | 'assistant.expression' // optional, prepared for Phase H — never emitted with real content in Phase F
+  | 'assistant.expression' // structured expression payload (Phase H)
   | 'action.pending_confirmation' // { pendingActionId, tool, securityLevel, summary }
   | 'action.executed' // { pendingActionId, toolName }
   | 'action.clarification_needed' // { candidateCount } — ambiguous "oui" with >1 open pending action

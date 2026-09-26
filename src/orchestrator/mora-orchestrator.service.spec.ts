@@ -179,6 +179,62 @@ describe('MoraOrchestratorService', () => {
     expect(ctx.auditService.log).toHaveBeenCalledOnce();
   });
 
+  it('recomputes route/scope/space/intent on every new turn in the same conversation', async () => {
+    ctx.routerService.classify
+      .mockResolvedValueOnce({
+        route: 'personal',
+        scope: 'personal',
+        space: 'personal',
+        intent: 'explanation',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      })
+      .mockResolvedValueOnce({
+        route: 'professional',
+        scope: 'professional',
+        space: 'code',
+        intent: 'question',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.92,
+        method: 'rules',
+      })
+      .mockResolvedValueOnce({
+        route: 'professional',
+        scope: 'professional',
+        space: 'general',
+        intent: 'question',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.93,
+        method: 'rules',
+      });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'Sujet A', metadata: {} });
+    ctx.professionalAgent.handle.mockResolvedValue({ content: 'Sujet B/C', metadata: {} });
+
+    const first = await ctx.service.handleMessage({ user, conversationId: 'conv-1', message: 'Explique-moi les rappels dans Mora.' });
+    const second = await ctx.service.handleMessage({ user, conversationId: 'conv-1', message: 'Non, parle-moi plutôt de PostgreSQL.' });
+    const third = await ctx.service.handleMessage({ user, conversationId: 'conv-1', message: 'En fait, parle-moi maintenant des index SQL.' });
+
+    expect(ctx.routerService.classify).toHaveBeenNthCalledWith(1, 'Explique-moi les rappels dans Mora.', 'u1');
+    expect(ctx.routerService.classify).toHaveBeenNthCalledWith(2, 'Non, parle-moi plutôt de PostgreSQL.', 'u1');
+    expect(ctx.routerService.classify).toHaveBeenNthCalledWith(3, 'En fait, parle-moi maintenant des index SQL.', 'u1');
+    expect(first.conversationId).toBe('conv-1');
+    expect(second.conversationId).toBe('conv-1');
+    expect(third.conversationId).toBe('conv-1');
+    expect(first.route).toBe('personal');
+    expect(second.space).toBe('code');
+    expect(ctx.professionalAgent.handle).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        message: 'En fait, parle-moi maintenant des index SQL.',
+        routerDecision: expect.objectContaining({ intent: 'question', space: 'general' }),
+      }),
+    );
+  });
+
   it('schedules a memory-extraction job for personal/professional but not for direct', async () => {
     ctx.routerService.classify.mockResolvedValue({
       route: 'personal',

@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiTags } from '@nestjs/swagger';
 import {
   HealthCheck,
@@ -6,6 +7,7 @@ import {
   HealthIndicatorService,
 } from '@nestjs/terminus';
 import { PrismaService } from '../database/prisma.service.js';
+import type { AppConfig } from '../config/configuration.js';
 import { RedisHealthIndicator } from './indicators/redis.health.js';
 
 @ApiTags('health')
@@ -16,12 +18,13 @@ export class HealthController {
     private readonly healthIndicatorService: HealthIndicatorService,
     private readonly prisma: PrismaService,
     private readonly redisIndicator: RedisHealthIndicator,
+    private readonly configService: ConfigService,
   ) {}
 
   @Get()
   @HealthCheck()
-  check() {
-    return this.health.check([
+  async check() {
+    const result = await this.health.check([
       async () => {
         const indicator = this.healthIndicatorService.check('postgres');
         try {
@@ -33,5 +36,15 @@ export class HealthController {
       },
       () => this.redisIndicator.isHealthy('redis'),
     ]);
+
+    const app = this.configService.get<AppConfig>('app')!;
+    return {
+      ...result,
+      environment: app.env,
+      version: {
+        build: app.buildVersion ?? null,
+        gitCommit: app.gitCommit ?? null,
+      },
+    };
   }
 }

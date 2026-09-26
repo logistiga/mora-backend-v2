@@ -1,4 +1,4 @@
-# Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
+> # Frontend Types — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G + Phase H)
 
 Conceptual TypeScript interfaces matching the **actual** JSON shapes returned by the API
 today (see [`API_CONTRACT.md`](API_CONTRACT.md) for full endpoint details). Copy/adapt these
@@ -47,6 +47,8 @@ interface HealthResponse {
   info: Record<string, HealthCheckEntry>; // e.g. { postgres: {...}, redis: {...} }
   error: Record<string, HealthCheckEntry>;
   details: Record<string, HealthCheckEntry>;
+  environment?: string;
+  version?: { build: string | null; gitCommit: string | null };
 }
 
 // ---- Conversations & Messages (Phase B) -----------------------------------
@@ -211,8 +213,16 @@ interface ProviderSettings {
   [key: string]: unknown;
 }
 
+type ProviderOwner = 'user' | 'system';
+/** Effective origin of the provider serving one kind for the current user. */
+type ProviderSource = 'user' | 'system' | 'none';
+
 interface AiProvider {
   id: string;
+  /** true = supplied by Mora, shared, ADMIN-managed, read-only for a standard
+   *  user (and then `keyHint` is always null). false = the user's own (BYOK). */
+  isSystem: boolean;
+  owner: ProviderOwner;
   name: string;
   provider: KnownProvider;
   kind: ProviderKind;
@@ -248,9 +258,11 @@ interface AiProviderStatus {
   ttsConfigured: boolean;
   imageConfigured: boolean;
   avatarConfigured: boolean;
+  /** Where the provider that will actually serve each kind comes from. */
+  sources: Record<string /* kind */, ProviderSource>;
   defaults: Record<
     string, // kind
-    { id: string; name: string; provider: string; model: string } | null
+    { id: string; name: string; provider: string; model: string; source: ProviderSource } | null
   >;
 }
 
@@ -567,7 +579,7 @@ interface EmailMessage {
   contactId: string | null;
 }
 
-// ---- Voice (Phase F) --------------------------------------------------------
+// ---- Voice (Phase F + Phase H realtime events) ------------------------------
 
 type VoiceSessionState =
   | 'created' | 'listening' | 'user_speaking' | 'transcribing' | 'thinking'
@@ -636,15 +648,191 @@ interface VoiceStatus {
   };
 }
 
+type AvatarChannel = 'text' | 'voice' | 'vision' | 'voice_vision';
+type AvatarState =
+  | 'idle' | 'listening' | 'thinking' | 'speaking' | 'confirming'
+  | 'interrupted' | 'paused' | 'error' | 'disconnected';
+type AvatarExpression =
+  | 'neutral' | 'attentive' | 'thinking' | 'explaining' | 'vision_focus'
+  | 'confirming' | 'celebrating' | 'concerned' | 'error';
+type AvatarLipSyncMode = 'viseme_timeline' | 'disabled';
+type AvatarViseme = 'sil' | 'A' | 'E' | 'I' | 'O' | 'U' | 'M' | 'F' | 'L' | 'S';
+type AvatarRenderMode = 'expressive_orb' | 'humanoid_placeholder' | 'minimal';
+
+interface AvatarStateEvent {
+  state: AvatarState;
+  channel: AvatarChannel;
+  expression: AvatarExpression;
+  intensity: number;
+  canInterrupt: boolean;
+  pendingConfirmation: boolean;
+  connection: 'connected' | 'reconnecting' | 'disconnected';
+  sessionId?: string;
+  conversationId?: string;
+  scope?: string;
+  space?: string;
+  sourceType?: string;
+  errorCode?: string;
+}
+
+interface AssistantExpressionEvent {
+  expression: AvatarExpression;
+  intensity: number;
+  state: AvatarState;
+  channel: AvatarChannel;
+  source: 'avatar_state_service';
+}
+
+interface AvatarLipSyncCue {
+  startMs: number;
+  endMs: number;
+  viseme: AvatarViseme;
+  weight: number;
+}
+
+interface AvatarLipSyncEvent {
+  mode: AvatarLipSyncMode;
+  source: 'estimated_text_timing';
+  channel: AvatarChannel;
+  durationMs: number;
+  textLength: number;
+  cues: AvatarLipSyncCue[];
+}
+
 // WebSocket event envelope (see API_CONTRACT.md for the full event table)
 interface VoiceServerEvent<T = unknown> {
   event:
     | 'session.ready' | 'transcript.partial' | 'transcript.final'
+    | 'avatar.state' | 'avatar.lipsync'
     | 'assistant.thinking.started' | 'assistant.speaking.started' | 'assistant.speaking.ended'
     | 'assistant.expression' | 'action.pending_confirmation' | 'action.executed'
     | 'action.clarification_needed' | 'session.state_changed' | 'session.interrupted'
     | 'session.ended' | 'latency.metrics' | 'error';
   data?: T;
+}
+
+// ---- Vision / Multimodal (Phase G) -----------------------------------------
+
+type VisionSourceType = 'upload' | 'camera' | 'screenshot' | 'voice_snapshot' | 'document';
+
+interface VisionAsset {
+  id: string;
+  conversationId: string;
+  messageId: string | null;
+  scope: 'personal' | 'professional';
+  space: string;
+  sourceType: VisionSourceType;
+  originalFilename: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  extension: '.png' | '.jpg' | '.webp';
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  status: 'ready' | 'analyzed' | 'failed' | 'archived';
+  summary: string | null;
+  extractedText: string | null;
+  analysis: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  analyzedAt: string | null;
+  // NEVER present: storageKey, storageProvider, checksum.
+}
+
+interface VisionStatus {
+  visionConfigured: boolean;
+  provider: { provider: string; model: string; kind: string } | null;
+  supportedMimeTypes: Array<'image/png' | 'image/jpeg' | 'image/webp'>;
+  maxFiles: number;
+  maxUploadBytes: number;
+  features: {
+    ocr: boolean;
+    multimodalConversation: boolean;
+    cameraSnapshot: boolean;
+    screenshot: boolean;
+  };
+}
+
+interface VisionAnalyzeResponse extends MessageResponse {
+  userMessageId: string;
+  assets: Array<{
+    id: string;
+    sourceType: VisionSourceType;
+    originalFilename: string;
+    summary: string;
+    extractedText: string;
+    structuredData: Record<string, unknown> | null;
+    width: number | null;
+    height: number | null;
+  }>;
+}
+
+// ---- Avatar (Phase H REST contract) ----------------------------------------
+
+interface AvatarProfile {
+  id: string;
+  name: string;
+  avatarPreset: string;
+  renderMode: AvatarRenderMode;
+  baseExpression: AvatarExpression;
+  expressionIntensity: number;
+  lipSyncMode: AvatarLipSyncMode;
+  voiceSyncEnabled: boolean;
+  idleEnabled: boolean;
+  reducedMotion: boolean;
+  settings: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AvatarStatus {
+  avatarConfigured: boolean;
+  profile: AvatarProfile;
+  provider: { id: string; provider: string; model: string; kind: string } | null;
+  realtime: {
+    websocketPath: '/voice/ws';
+    protocolVersion: number;
+    events: string[];
+  };
+  features: {
+    expressions: boolean;
+    lipSync: boolean;
+    confirmations: boolean;
+    reconnectStates: boolean;
+    multimodalState: boolean;
+    voiceVision: boolean;
+  };
+  privacy: {
+    autoCapture: boolean;
+    backgroundScreenMonitoring: boolean;
+    liveCameraRequiresExplicitUserAction: boolean;
+  };
+}
+
+// ---- Bug reports (staging / debug UX) --------------------------------------
+
+type BugReportCategory = 'ui' | 'api' | 'voice' | 'vision' | 'avatar' | 'auth' | 'performance' | 'other';
+type BugReportSeverity = 'low' | 'medium' | 'high' | 'critical';
+type BugReportStatus = 'open' | 'investigating' | 'resolved' | 'ignored';
+
+interface BugReport {
+  id: string;
+  userId: string | null;
+  requestId: string | null;
+  conversationId: string | null;
+  voiceSessionId: string | null;
+  category: BugReportCategory;
+  severity: BugReportSeverity;
+  title: string;
+  description: string;
+  frontendRoute: string | null;
+  apiRoute: string | null;
+  browserInfo: string | null;
+  appVersion: string | null;
+  metadata: Record<string, unknown> | null;
+  status: BugReportStatus;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ---- Error shape (every endpoint) ------------------------------------------
@@ -654,6 +842,7 @@ interface ApiError {
   timestamp: string;
   path: string;
   method: string;
+  requestId: string;
   message: string | string[];
 }
 ```
@@ -661,15 +850,20 @@ interface ApiError {
 ## Notes for the frontend implementer
 
 - Dates are ISO 8601 strings (`Date`-parseable), not Unix timestamps.
+- Every HTTP response includes `X-Request-Id`; every error body also includes `requestId`.
+  Preserve it in logs, support tickets, and `POST /bug-reports`.
 - `metadata` fields are intentionally loose (`Record<string, unknown>`) — treat their
   contents as debug/optional-display info, never rely on a specific key being present in
   production UI logic beyond what's documented in `API_CONTRACT.md`.
 - Phase F adds the first real-time transport: a native WebSocket at `/voice/ws` for the voice
-  channel only (see `VoiceServerEvent` above and `API_CONTRACT.md`). Every other endpoint
+  channel. Phase H reuses that same socket for avatar state/expression/lip-sync events; Phase G
+  adds a multimodal REST channel at `/vision/*` for image-based turns. Every other endpoint
   remains REST-only, request/response.
 - Phase F: `transcript.partial` exists in the `VoiceServerEvent` union for forward-compatibility
   but is never actually emitted in Phase F (the shipped STT provider is batch-only) — don't
   build UI logic that waits for it.
+- Phase H: `avatar.lipsync` is an estimated viseme timeline derived from response text, not a
+  phoneme-perfect provider stream. Respect `reducedMotion` / `voiceSyncEnabled` client-side.
 - `AiProvider` has no `apiKey` field on the wire, ever — don't add one to a local type either;
   a form component should keep a plaintext key entirely in local component state and send it
   only in the `POST`/`PATCH` request body, never store it in app state/cache alongside the rest
@@ -681,7 +875,8 @@ interface ApiError {
   `POST /pending-actions/:id/approve` or `/reject` before anything happens. The same rule
   applies to every Phase E N2 tool (`create_contact`, `calendar_create_event`,
   `whatsapp_send_message`, `email_send`, etc.).
-- Phase E: `Document.storageKey`/`storageProvider` are internal — never construct a download
-  URL from them client-side; there is no public file-serving endpoint yet (out of scope, see
-  "Endpoints NOT yet available"). `WhatsAppAccount`/`EmailAccount` never expose credentials on
-  the wire, the same discipline as `AiProvider`.
+- Phase E / G: `Document.storageKey`/`storageProvider` and `VisionAsset` storage internals are
+  backend-only — never construct a download URL from them client-side; there is no public
+  file-serving endpoint yet (out of scope, see "Endpoints NOT yet available").
+  `WhatsAppAccount`/`EmailAccount` never expose credentials on the wire, the same discipline as
+  `AiProvider`.

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -29,6 +30,7 @@ export class DocumentsController {
   constructor(private readonly documentService: DocumentService) {}
 
   @Post()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiConsumes('multipart/form-data')
   // Multer's own limit is a coarse first line of defense (static, evaluated
   // at decorator time); DocumentService.upload() re-checks against the

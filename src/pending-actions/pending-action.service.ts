@@ -17,6 +17,10 @@ export type RejectOutcome =
   | { status: 'rejected'; pendingAction: PendingAction }
   | { status: 'already_processed'; pendingAction: PendingAction };
 
+export type CancelOutcome =
+  | { status: 'cancelled'; pendingAction: PendingAction }
+  | { status: 'already_processed'; pendingAction: PendingAction };
+
 /**
  * Owns the pending_action lifecycle (pending -> approved -> executed, or
  * pending -> rejected, or pending -> expired). This is the ONLY place a
@@ -163,5 +167,34 @@ export class PendingActionService {
 
     const current = await this.prisma.pendingAction.findUniqueOrThrow({ where: { id } });
     return { status: 'rejected', pendingAction: current };
+  }
+
+  async cancel(userId: string, id: string, reason = 'voice_interrupted'): Promise<CancelOutcome> {
+    const pendingAction = await this.getById(userId, id);
+
+    const claim = await this.prisma.pendingAction.updateMany({
+      where: { id, status: 'pending' },
+      data: {
+        status: 'cancelled',
+        result: { cancelledReason: reason } as Prisma.InputJsonValue,
+      },
+    });
+
+    if (claim.count === 0) {
+      const current = await this.prisma.pendingAction.findUniqueOrThrow({ where: { id } });
+      return { status: 'already_processed', pendingAction: current };
+    }
+
+    await this.audit.log({
+      userId,
+      conversationId: pendingAction.conversationId ?? undefined,
+      action: 'pending_action_cancelled',
+      scope: pendingAction.scope,
+      space: pendingAction.space,
+      metadata: { pendingActionId: id, toolName: pendingAction.toolName, reason },
+    });
+
+    const current = await this.prisma.pendingAction.findUniqueOrThrow({ where: { id } });
+    return { status: 'cancelled', pendingAction: current };
   }
 }

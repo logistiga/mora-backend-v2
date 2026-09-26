@@ -26,6 +26,7 @@ Thumbs.db
 # Cache
 .cache/
 .turbo/
+.tmp/
 
 # Test coverage
 coverage/
@@ -35,3 +36,6 @@ coverage/
 # Phase E: local document storage (LocalDocumentStorageProvider) — real
 # uploaded file content, never versioned.
 /storage/
+
+# Staging env file with real secrets, generated on the host.
+.env.staging

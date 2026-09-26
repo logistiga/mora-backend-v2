@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { AiModelSelectorService } from './ai-model-selector.service.js';
 import { AiProviderController } from './ai-provider.controller.js';
+import { AiProviderSystemController } from './ai-provider-system.controller.js';
+import { RolesGuard } from '../common/guards/roles.guard.js';
 import { AiProviderService } from './ai-provider.service.js';
 import { ChatAdapterRegistry } from './adapters/chat-adapter-registry.service.js';
 import { EmbeddingAdapterRegistry } from './adapters/embedding-adapter-registry.service.js';
@@ -12,8 +14,11 @@ import { SecretEncryptionService } from './secret-encryption.service.js';
 
 @Module({
   imports: [PassportModule.register({ defaultStrategy: 'jwt-access' })],
-  controllers: [AiProviderController],
+  // AiProviderSystemController first: '/ai-providers/system' must not be
+  // swallowed by '/ai-providers/:id'.
+  controllers: [AiProviderSystemController, AiProviderController],
   providers: [
+    RolesGuard,
     SecretEncryptionService,
     OpenAiCompatibleChatAdapter,
     OpenAiCompatibleEmbeddingAdapter,

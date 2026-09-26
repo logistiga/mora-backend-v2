@@ -11,4 +11,5 @@ export const DOCUMENT_JOB_DEFAULT_OPTIONS = {
 export interface DocumentProcessingJobData {
   documentId: string;
   userId: string;
+  requestId?: string;
 }

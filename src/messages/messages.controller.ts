@@ -1,5 +1,6 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -18,6 +19,7 @@ export class MessagesController {
   ) {}
 
   @Post()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOkResponse({ description: 'Mora response with routing metadata' })
   async create(
     @CurrentUser() user: AuthenticatedUser,

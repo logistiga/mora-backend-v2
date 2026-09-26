@@ -31,6 +31,10 @@ COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY prisma ./prisma
 
+# Upload storage is a mount point at runtime; create it owned by the runtime
+# user so a fresh named volume inherits that ownership and stays writable.
+RUN mkdir -p /app/storage/documents && chown -R mora:mora /app/storage
+
 USER mora
 EXPOSE 3000
 

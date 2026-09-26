@@ -14,6 +14,9 @@ export class MemoryExtractionProcessor extends WorkerHost {
 
   async process(job: Job<MemoryExtractionJobData>): Promise<{ committed: number }> {
     const { userId, scope, space, sourceMessageId, userMessage, assistantResponse } = job.data;
+    this.logger.debug(
+      `Processing memory extraction ${sourceMessageId} (requestId=${job.data.requestId ?? 'n/a'}, jobId=${job.id ?? 'n/a'})`,
+    );
 
     const candidates = await this.extractionService.proposeCandidates(userMessage, assistantResponse, {
       userId,

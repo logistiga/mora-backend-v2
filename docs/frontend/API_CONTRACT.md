@@ -1,6 +1,8 @@
-# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E)
+# API Contract — Mora Backend v2 (Phase A + Phase B + Phase C + Phase C.5 + Phase D + Phase E + Phase F + Phase G + Phase H)
 
 Base URL (local dev): `http://localhost:3000/api/v1`
+Base URL (staging): `https://mora-v2-staging.logistiga.tech/api/v1` — websocket
+`wss://mora-v2-staging.logistiga.tech/voice/ws`, Swagger `/docs`, OpenAPI `/docs-json`.
 All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise.
 
 **Global error shape** (from `AllExceptionsFilter`, applies to every endpoint below):
@@ -10,14 +12,27 @@ All request/response bodies are JSON. Auth is JWT Bearer unless stated otherwise
   "timestamp": "2026-09-22T13:00:00.000Z",
   "path": "/api/v1/users/me",
   "method": "GET",
+  "requestId": "req_123",
   "message": "Unauthorized"
 }
 ```
 `message` can be a string or a string array (validation errors return an array, one entry
 per failed field).
 
+**Request correlation**:
+- Every HTTP response now includes `X-Request-Id`.
+- Error bodies also include the same `requestId`.
+- The frontend should preserve/show this ID in bug reporting and debug UI instead of inventing
+  its own correlation token.
+
 **Rate limiting**: global default 100 requests / 60s per client (env-configurable); `POST
-/auth/login` is stricter: 5 requests / 60s. A throttled request returns `429`.
+/auth/login` is stricter: 5 requests / 60s. Additional stricter endpoints:
+- `POST /messages`: 30 / 60s
+- `POST /documents`: 10 / 60s
+- `POST /vision/analyze`: 6 / 60s
+- `POST /voice/sessions`: 12 / 60s
+- `POST /bug-reports`: 5 / 60s
+A throttled request returns `429`.
 
 ---
 
@@ -85,7 +100,9 @@ per failed field).
     "status": "ok",
     "info": { "postgres": { "status": "up" }, "redis": { "status": "up" } },
     "error": {},
-    "details": { "postgres": { "status": "up" }, "redis": { "status": "up" } }
+    "details": { "postgres": { "status": "up" }, "redis": { "status": "up" } },
+    "environment": "staging",
+    "version": { "build": "2026.09.25", "gitCommit": "4835cee" }
   }
   ```
 - **Failure — 503**: same shape, a failing check appears under `error` with
@@ -141,6 +158,71 @@ per failed field).
     }
   }
   ```
+
+---
+
+## Bug Reports (Staging / Debug UX)
+
+### `POST /api/v1/bug-reports`
+- **Auth**: `Authorization: Bearer <accessToken>`
+- **Headers**: optional `X-Request-Id` if the frontend already has one from a failing request.
+- **Body**:
+  ```json
+  {
+    "category": "avatar",
+    "severity": "high",
+    "title": "Avatar freeze after reconnect",
+    "description": "The avatar stopped animating after the voice session recovered.",
+    "requestId": "req_123",
+    "conversationId": "uuid (optional)",
+    "voiceSessionId": "uuid (optional)",
+    "frontendRoute": "/voice",
+    "apiRoute": "/api/v1/voice/sessions",
+    "browserInfo": "Chrome 140 / Windows 11",
+    "appVersion": "staging-2026-09-25",
+    "metadata": { "panel": "voice", "step": "after reconnect" }
+  }
+  ```
+- `category`: `ui | api | voice | vision | avatar | auth | performance | other`
+- `severity`: `low | medium | high | critical`
+- **Success — 201**:
+  ```json
+  {
+    "id": "uuid",
+    "userId": "uuid",
+    "requestId": "req_123",
+    "conversationId": "uuid",
+    "voiceSessionId": "uuid",
+    "category": "avatar",
+    "severity": "high",
+    "title": "Avatar freeze after reconnect",
+    "description": "The avatar stopped animating after the voice session recovered.",
+    "frontendRoute": "/voice",
+    "apiRoute": "/api/v1/voice/sessions",
+    "browserInfo": "Chrome 140 / Windows 11",
+    "appVersion": "staging-2026-09-25",
+    "metadata": { "panel": "voice", "step": "after reconnect" },
+    "status": "open",
+    "createdAt": "2026-09-25T12:00:00.000Z",
+    "updatedAt": "2026-09-25T12:00:00.000Z"
+  }
+  ```
+- **Security rule**: metadata is sanitized server-side; secrets/tokens/passwords/API keys are
+  dropped or redacted rather than persisted.
+
+### `GET /api/v1/bug-reports`
+- **Auth**: Bearer token, `ADMIN` role only.
+- **Query**: `status?`, `userId?`, `requestId?`, `limit?`
+- **Success — 200**: array of bug reports.
+
+### `PATCH /api/v1/bug-reports/:id`
+- **Auth**: Bearer token, `ADMIN` role only.
+- **Body**:
+  ```json
+  { "status": "investigating" }
+  ```
+- `status`: `open | investigating | resolved | ignored`
+- **Success — 200**: updated bug report row.
   When `action` is present, **nothing has been executed yet** — the frontend should render a
   confirm/cancel card and call `POST /pending-actions/:id/approve` or `/reject` (see below).
   When `action` is absent, the response is final (either a plain reply, or an N1 tool — e.g.
@@ -430,15 +512,33 @@ Every endpoint below is Bearer-authenticated and scoped to the caller's own `use
 endpoint accepts a client-supplied `userId`. **No response, ever, contains the API key** — only
 `hasKey` (boolean) and `keyHint` (last 4 characters).
 
+### SYSTEM vs USER providers
+
+A provider row is either:
+- **SYSTEM** (`isSystem: true`, `owner: "system"`) — supplied by Mora, shared by every user,
+  managed only by an `ADMIN` through `/api/v1/ai-providers/system/*`. Read-only for everyone
+  else, and its `keyHint` is `null` outside the admin routes.
+- **USER / BYOK** (`isSystem: false`, `owner: "user"`) — the caller's own provider, optional.
+
+Resolution for any call (chat, embedding, vision, stt, tts, avatar) is, in order:
+1. the caller's own matching active provider (exact `scope`+`space` → `scope` only → global),
+2. otherwise the matching active SYSTEM provider (same three tiers),
+3. otherwise "not configured" (the endpoint degrades honestly — it never invents an answer).
+
+So **a user never has to enter a key**: if Mora has a SYSTEM provider for that kind, it just
+works; a personal key, when present, always overrides it.
+
 ### `GET /api/v1/ai-providers`
 - **Query params** (optional): `kind` (`chat|embedding|vision|stt|tts|image|avatar|...`),
   `scope` (`personal|professional`), `space`, `isActive` (`"true"|"false"`).
-- **Success — 200**: array, ordered `isDefault` desc, then `priority` desc, then
-  `updatedAt` desc. See `AiProvider` shape below.
+- **Success — 200**: array containing the caller's own providers **plus the SYSTEM ones**
+  (`isSystem: true`, `keyHint: null`). Personal rows come first, then `isDefault` desc,
+  `priority` desc, `updatedAt` desc. See `AiProvider` shape below.
 - **Errors**: `401`.
 
 ### `GET /api/v1/ai-providers/:id`
-- **Success — 200**: one `AiProvider`. **Errors**: `401`, `403` (not yours), `404`.
+- **Success — 200**: one `AiProvider` — the caller's own, or a SYSTEM one (read-only,
+  `keyHint: null`). **Errors**: `401`, `403` (another user's provider), `404`.
 
 ### `POST /api/v1/ai-providers`
 - **Body**:
@@ -499,6 +599,7 @@ endpoint accepts a client-supplied `userId`. **No response, ever, contains the A
 - **Errors**: `401`, `403`, `404`.
 
 ### `GET /api/v1/ai-providers/status`
+- Reflects the **effective** resolution (USER → SYSTEM → none) for each kind.
 - **Success — 200**:
   ```json
   {
@@ -509,14 +610,44 @@ endpoint accepts a client-supplied `userId`. **No response, ever, contains the A
     "ttsConfigured": false,
     "imageConfigured": false,
     "avatarConfigured": false,
+    "sources": {
+      "chat": "user",
+      "embedding": "system",
+      "vision": "none", "stt": "none", "tts": "none", "image": "none", "avatar": "none"
+    },
     "defaults": {
-      "chat": { "id": "uuid", "name": "My OpenAI", "provider": "openai", "model": "gpt-4o-mini" },
-      "embedding": { "id": "uuid", "name": "My Embeddings", "provider": "openai", "model": "text-embedding-3-small" },
+      "chat": { "id": "uuid", "name": "My OpenAI", "provider": "openai", "model": "gpt-4o-mini", "source": "user" },
+      "embedding": { "id": "uuid", "name": "Mora Embeddings", "provider": "openai", "model": "text-embedding-3-small", "source": "system" },
       "vision": null, "stt": null, "tts": null, "image": null, "avatar": null
     }
   }
   ```
+  `sources[kind]` is `"user"` (the caller's BYOK provider), `"system"` (provided by Mora) or
+  `"none"`. `<kind>Configured` is `true` as soon as either source resolves.
 - **Errors**: `401`.
+
+---
+
+## AI Providers — SYSTEM routes (ADMIN only)
+
+Same request/response shapes as above, but they operate exclusively on SYSTEM rows
+(`user_id IS NULL`). Every route requires `role = ADMIN`; anyone else gets **`403`**
+(`{"message": "Insufficient role"}`). Returned rows always carry `isSystem: true` and, here
+only, a non-null `keyHint`.
+
+| Route | Behavior |
+|---|---|
+| `GET /api/v1/ai-providers/system` | List SYSTEM providers (same query params as the user list) |
+| `GET /api/v1/ai-providers/system/:id` | One SYSTEM provider |
+| `POST /api/v1/ai-providers/system` | Create — same body as `POST /ai-providers`; `apiKey` encrypted on receipt |
+| `PATCH /api/v1/ai-providers/system/:id` | Update / rotate the key |
+| `POST /api/v1/ai-providers/system/:id/enable` \| `/disable` | Toggle; a disabled SYSTEM provider stops resolving for every user |
+| `POST /api/v1/ai-providers/system/:id/set-default` | Default among SYSTEM rows of the same (kind, scope, space) |
+| `POST /api/v1/ai-providers/system/:id/test` | Real minimal call, same semantics as the user route |
+| `DELETE /api/v1/ai-providers/system/:id` | 204, hard delete |
+
+Passing a personal provider's id to any of these returns `403` (and vice-versa: a SYSTEM id on
+the user routes returns `403`), so the two spaces can never be confused.
 
 **`AiProvider` response shape** (every endpoint above except `/test` and `/status`):
 ```json
@@ -734,7 +865,7 @@ learn beyond the tool names.
 
 ---
 
-## Voice (Phase F) — REAL-TIME VOICE ENGINE
+## Voice (Phase F + Phase H) — REAL-TIME VOICE ENGINE + AVATAR EVENTS
 
 **Core principle: voice is a CHANNEL, not a new assistant.** A voice turn ends up calling the
 exact same Orchestrator/Router/Agents/Memory/Documents/Tools pipeline as a normal text message
@@ -796,8 +927,11 @@ misbehaving.
 |---|---|---|
 | `session.ready` | `{ sessionId, state, protocolVersion, audioFormat }` | |
 | `transcript.final` | `{ text }` | The ONLY transcript event Phase F emits — see below. |
+| `avatar.state` | `{ state, channel, expression, intensity, canInterrupt, pendingConfirmation, connection, sessionId?, conversationId?, scope?, space?, sourceType?, errorCode? }` | Phase H realtime avatar state. `connection`: `connected | reconnecting | disconnected`. |
+| `avatar.lipsync` | `{ mode, source, channel, durationMs, textLength, cues[] }` | Phase H estimated lip-sync contract. Each cue is `{ startMs, endMs, viseme, weight }`. |
 | `assistant.thinking.started` | — | Orchestrator call in flight. |
-| `assistant.speaking.started` / `assistant.speaking.ended` | — | Also the hook point future Phase H avatar lip-sync will attach to; no avatar logic exists yet. |
+| `assistant.speaking.started` / `assistant.speaking.ended` | — | Speech lifecycle hooks; Phase H avatar state and lip-sync are emitted alongside these events. |
+| `assistant.expression` | `{ expression, intensity, state, channel, source }` | Phase H controlled expression signal (`neutral`, `attentive`, `thinking`, `explaining`, `vision_focus`, `confirming`, `celebrating`, `concerned`, `error`). |
 | *(binary frame)* | MP3 bytes | Assistant audio, streamed sentence by sentence as it's synthesized. |
 | `action.pending_confirmation` | `{ pendingActionId, tool, securityLevel, summary }` | An N2/N3 tool call needs a spoken "oui"/"non" — same semantics as the text-chat `action` field. |
 | `action.executed` | `{ pendingActionId, toolName }` | |
@@ -813,6 +947,18 @@ protocol type for a future streaming-capable STT provider, but the shipped OpenA
 adapter is batch-only (`supportsPartialTranscripts: false`) — it produces one transcript per
 turn, sent as `transcript.final`. Do not build UI that waits for `transcript.partial` updates;
 show a "listening…"/waveform indicator instead until `transcript.final` arrives.
+
+**Phase H avatar mapping:** the backend now emits deterministic avatar state transitions for the
+same voice session:
+- `session.ready` / `session.resume` -> `avatar.state: listening`
+- `assistant.thinking.started` -> `avatar.state: thinking` + `assistant.expression`
+- `assistant.speaking.started` -> `avatar.state: speaking` + `assistant.expression` + `avatar.lipsync`
+- `action.pending_confirmation` -> `avatar.state: confirming`
+- `session.interrupt` or implicit barge-in -> `avatar.state: interrupted`, then `listening`
+- `session.pause` -> `avatar.state: paused`
+- `error` -> `avatar.state: error`
+- reconnect to an already-running session -> transient `avatar.state` with `connection: "reconnecting"` before the normal connected state
+- `session.end` -> `avatar.state: disconnected`
 
 **Confirmation via voice**: a bare "oui" is only ever bound to a `pendingActionId` that was
 raised in *that same session*. If two pending actions are open, the backend replies
@@ -837,19 +983,246 @@ to say which one explicitly.
 - **Wake word**: NOT implemented as a real detector — `mode: "wake_word"` is accepted by the API
   but currently resolves to an explicitly-labeled simulated/no-op detector
   (`isRealAudioTested: false`). Use `push_to_talk` or `continuous_session` for now.
-- **Avatar**: not built (deferred to Phase H). `assistant.speaking.started`/`ended` events exist
-  and are safe to wire up now; `assistant.expression` is reserved but never emitted with real
-  content in Phase F.
+- **Avatar realtime backend**: REAL in Phase H — profile/status REST endpoints, controlled
+  expressions, reconnect/disconnect states, and estimated lip-sync payloads are implemented and
+  covered by automated tests. No browser renderer ships in this backend repo.
+
+---
+
+## Vision (Phase G) — MULTIMODAL IMAGE CHANNEL
+
+**Core principle: vision is a CHANNEL, not a separate assistant.** The uploaded image(s) are
+analyzed first, then the resulting visual context is injected into the exact same
+Orchestrator/Router/Agents/Memory/Documents pipeline as a normal Mora turn. The frontend
+should think "same conversation, extra visual input", not "new product surface with a separate
+brain".
+
+### REST endpoints
+
+- `GET /vision/status?scope=<personal|professional>&space=<space>` — tells the client whether a
+  vision-capable provider is configured for that exact scope/space pair. Returns
+  `{ visionConfigured, provider, supportedMimeTypes, maxFiles, maxUploadBytes, features }`.
+  Use it before showing an enabled camera/screenshot/upload UI.
+- `POST /vision/analyze` (`multipart/form-data`) — fields:
+  - `files`: **1 to 4** image files, multipart field name exactly `files`
+  - `message`: required user question / instruction
+  - `scope`: `personal` | `professional`
+  - `space`: required (`personal` for personal turns; `general` | `logistiga` | `piston` | `code`
+    for professional turns)
+  - `conversationId?`: continue an existing conversation instead of creating a new one
+  - `sourceType?`: `upload` | `camera` | `screenshot` | `voice_snapshot` | `document`
+- `GET /vision/assets/:id` — returns a **sanitized** view of one owned asset
+  (`id`, conversation/message ids, scope/space, sourceType, filename, mime/extension, size,
+  dimensions, status, summary, extractedText, analysis, errorMessage, timestamps). It does
+  **not** expose storage internals like `storageKey`, `storageProvider`, or checksums.
+
+### Upload / validation rules
+
+- Accepted MIME types: `image/png`, `image/jpeg`, `image/webp`.
+- Server-side validation is binary-signature based, not trust-the-browser MIME only.
+- Maximum size: **10 MB per file**.
+- Maximum count: **4 files per request**.
+- Maximum dimensions: **4096 x 4096**.
+- Filenames are sanitized server-side; never assume the original client filename is preserved
+  byte-for-byte.
+
+### Response shape
+
+`POST /vision/analyze` returns the normal Mora message contract plus the originating user message
+id and the analyzed assets:
+
+```json
+{
+  "conversationId": "uuid",
+  "userMessageId": "uuid",
+  "messageId": "uuid",
+  "response": "Je vois un tableau PostgreSQL...",
+  "route": "professional",
+  "scope": "professional",
+  "space": "code",
+  "confidence": 0.95,
+  "assets": [
+    {
+      "id": "uuid",
+      "sourceType": "screenshot",
+      "originalFilename": "capture.png",
+      "summary": "Un tableau PostgreSQL est visible.",
+      "extractedText": "PostgreSQL",
+      "structuredData": { "topic": "postgresql" },
+      "width": 1,
+      "height": 1
+    }
+  ]
+}
+```
+
+### Conversation semantics
+
+- Omit `conversationId` to start a new multimodal conversation.
+- Reuse the returned `conversationId` for follow-up turns, including plain text via
+  `POST /messages`.
+- The backend persists a bounded `visionContextSummary` on the originating user message so later
+  turns can reuse the relevant visual context **without re-uploading every prior image**.
+- Vision turns are stored with `channel: "vision"` metadata; `sourceType: "voice_snapshot"`
+  upgrades the stored metadata to `channel: "voice_vision"` so the same conversation can drive
+  voice + avatar + image UX without a separate pipeline.
+
+### Security / isolation rules
+
+- Images are treated as **untrusted content**. Text seen inside an image is data to read, never a
+  system instruction.
+- A malicious screenshot saying "ignore previous instructions" must not change route, scope,
+  space, permissions, pending-action state, or secret access.
+- `scope` / `space` isolation is enforced exactly like text and voice:
+  `personal` never sees professional data, and a professional screenshot in `logistiga` stays in
+  `professional/logistiga`.
+- The backend deliberately overrides routing to the requested `scope` / `space` so a short prompt
+  like "Que vois-tu ?" does not accidentally fall back to a `direct` route.
+
+### Error shape / expected failures
+
+- `400` — validation failure (`No image provided`, unsupported image type, oversized file, too
+  many images, unsupported professional space, invalid DTO fields).
+- `403` / `404` — not your conversation or not your asset.
+- `503` — no vision-capable provider configured for that scope/space, or no compatible adapter
+  registered for the configured provider.
+- Provider-side failures are sanitized before reaching the client; no raw API key or provider
+  secret is ever exposed.
+
+### Phase G status
+
+- Targeted unit tests and targeted e2e tests exist for validation, provider resolution,
+  conversation continuity, and persisted asset linkage.
+- A real provider call still depends on a configured model with actual vision capability; use
+  `GET /vision/status` first rather than assuming every chat model can analyze images.
+
+---
+
+## Avatar (Phase H) — STATE, PROFILE, AND FRONTEND CONTRACT
+
+**Core principle: avatar is PRESENTATION STATE, not a second model.** The backend does not run a
+separate avatar brain. It exposes deterministic state, expression, and lip-sync payloads derived
+from the existing voice + vision + orchestrator pipeline so a frontend can animate Mora
+consistently.
+
+### REST endpoints
+
+- `GET /avatar/profile` — returns the caller's avatar profile, creating a default one on first
+  read if missing.
+- `PATCH /avatar/profile` — updates the caller's avatar preferences.
+- `GET /avatar/status` — returns avatar readiness, current profile, optional avatar provider
+  resolution, the voice WebSocket path/protocol, and supported realtime events/features.
+
+### `GET /avatar/profile`
+- **Auth**: `Authorization: Bearer <accessToken>`
+- **Success — 200**:
+  ```json
+  {
+    "id": "uuid",
+    "name": "Mora Core",
+    "avatarPreset": "mora_core",
+    "renderMode": "expressive_orb",
+    "baseExpression": "neutral",
+    "expressionIntensity": 0.7,
+    "lipSyncMode": "viseme_timeline",
+    "voiceSyncEnabled": true,
+    "idleEnabled": true,
+    "reducedMotion": false,
+    "settings": { "realtimeTransport": "voice_ws" },
+    "createdAt": "2026-09-25T00:10:00.000Z",
+    "updatedAt": "2026-09-25T00:10:00.000Z"
+  }
+  ```
+
+### `PATCH /avatar/profile`
+- **Auth**: Bearer token.
+- **Body** (all optional):
+  ```json
+  {
+    "name": "Mora Compact",
+    "avatarPreset": "mora_core",
+    "renderMode": "minimal",
+    "baseExpression": "attentive",
+    "expressionIntensity": 0.6,
+    "lipSyncMode": "viseme_timeline",
+    "voiceSyncEnabled": true,
+    "idleEnabled": true,
+    "reducedMotion": true,
+    "settings": { "theme": "dark" }
+  }
+  ```
+- **Success — 200**: same shape as `GET /avatar/profile`.
+- **Errors**: `400` (validation), `401`.
+
+### `GET /avatar/status`
+- **Auth**: Bearer token.
+- **Success — 200**:
+  ```json
+  {
+    "avatarConfigured": true,
+    "profile": {
+      "id": "uuid",
+      "name": "Mora Core",
+      "avatarPreset": "mora_core",
+      "renderMode": "expressive_orb",
+      "baseExpression": "neutral",
+      "expressionIntensity": 0.7,
+      "lipSyncMode": "viseme_timeline",
+      "voiceSyncEnabled": true,
+      "idleEnabled": true,
+      "reducedMotion": false,
+      "settings": { "realtimeTransport": "voice_ws" },
+      "createdAt": "2026-09-25T00:10:00.000Z",
+      "updatedAt": "2026-09-25T00:10:00.000Z"
+    },
+    "provider": null,
+    "realtime": {
+      "websocketPath": "/voice/ws",
+      "protocolVersion": 1,
+      "events": [
+        "avatar.state",
+        "assistant.expression",
+        "avatar.lipsync",
+        "assistant.speaking.started",
+        "assistant.speaking.ended",
+        "action.pending_confirmation",
+        "session.interrupted"
+      ]
+    },
+    "features": {
+      "expressions": true,
+      "lipSync": true,
+      "confirmations": true,
+      "reconnectStates": true,
+      "multimodalState": true,
+      "voiceVision": true
+    },
+    "privacy": {
+      "autoCapture": false,
+      "backgroundScreenMonitoring": false,
+      "liveCameraRequiresExplicitUserAction": true
+    }
+  }
+  ```
+
+### Rendering and privacy rules
+
+- `renderMode` is frontend presentation state only; the backend does not ship a 3D renderer.
+- `lipSyncMode: "viseme_timeline"` is estimated from Mora's response text, not provider phoneme timing.
+- `voiceSyncEnabled`, `idleEnabled`, and `reducedMotion` are user preferences the frontend should honor.
+- No autonomous camera capture, background screenshotting, or hidden streaming is allowed; avatar
+  animation must stay driven by explicit voice/vision actions already authorized by the user.
 
 ---
 
 ## Endpoints NOT yet available
 
-No endpoint exists (as of Phase F) for: audit entries, conversation rename/delete/title,
+No endpoint exists (as of Phase H) for: audit entries, conversation rename/delete/title,
 pagination cursors, cross-scope toggle, POST/PATCH for profile-facts or entities, a supersede
 endpoint, real Google/Microsoft Calendar, real Gmail/Microsoft Graph email, a working Meta
-Cloud WhatsApp provider, avatar, n8n, a "reveal API key"/"reveal credentials"
-endpoint (doesn't exist — by design), vision/image/avatar provider testing, a real wake-word
-detector, and no N3/N4 tool of any kind (the security levels exist and are enforced, but no
-phase yet ships a concrete tool at those levels). OCR is not implemented — a scanned/image-only
-PDF is marked `needs_review`, never silently indexed as empty.
+Cloud WhatsApp provider, a browser-rendered 3D avatar scene or asset download endpoint, n8n, a "reveal API key"/"reveal credentials"
+endpoint (doesn't exist — by design), a public vision/image/avatar provider-testing endpoint, a
+real wake-word detector, continuous screen-sharing/video ingestion, hidden/autonomous capture of
+camera or screen frames, and no N3/N4 tool of any kind (the security levels exist and are
+enforced, but no phase yet ships a concrete tool at those levels). There is still no public file
+download URL for `Document` or `VisionAsset` storage keys.

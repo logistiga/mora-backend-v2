@@ -3,6 +3,10 @@ export interface AppConfig {
   port: number;
   apiPrefix: string;
   corsOrigin: string;
+  allowedOrigins: string[];
+  swaggerEnabled: boolean;
+  buildVersion?: string;
+  gitCommit?: string;
   database: {
     url: string;
   };
@@ -62,10 +66,20 @@ export interface AppConfig {
 
 export default (): { app: AppConfig } => ({
   app: {
-    env: process.env.NODE_ENV ?? 'development',
+    env: process.env.MORA_APP_ENV ?? process.env.NODE_ENV ?? 'development',
     port: parseInt(process.env.PORT ?? '3000', 10),
     apiPrefix: process.env.API_PREFIX ?? 'api/v1',
-    corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    corsOrigin: process.env.MORA_ALLOWED_ORIGINS ?? process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+    allowedOrigins: (process.env.MORA_ALLOWED_ORIGINS ?? process.env.CORS_ORIGIN ?? 'http://localhost:3000')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    swaggerEnabled:
+      process.env.MORA_SWAGGER_ENABLED === 'true' ||
+      (process.env.MORA_SWAGGER_ENABLED !== 'false' &&
+        (process.env.NODE_ENV ?? 'development') !== 'production'),
+    buildVersion: process.env.MORA_BUILD_VERSION || undefined,
+    gitCommit: process.env.MORA_GIT_COMMIT || undefined,
     database: {
       url: process.env.DATABASE_URL ?? '',
     },

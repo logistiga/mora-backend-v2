@@ -20,13 +20,13 @@ async function bootstrap(): Promise<void> {
   const appConfig = configService.get<AppConfig>('app')!;
 
   app.enableCors({
-    origin: appConfig.corsOrigin.split(',').map((origin) => origin.trim()),
+    origin: parseCorsOrigins(appConfig.allowedOrigins),
     credentials: true,
   });
 
   app.setGlobalPrefix(appConfig.apiPrefix);
 
-  if (appConfig.env !== 'production') {
+  if (appConfig.swaggerEnabled) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Mora Backend v2')
       .setDescription('Phase A — core foundation API')
@@ -38,6 +38,17 @@ async function bootstrap(): Promise<void> {
   }
 
   await app.listen(appConfig.port);
+}
+
+/** An entry containing `*` matches exactly one subdomain label. */
+function parseCorsOrigins(origins: string[]): (string | RegExp)[] {
+  return origins.map((origin) =>
+    origin.includes('*')
+      ? new RegExp(
+          `^${origin.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^.]+')}$`,
+        )
+      : origin,
+  );
 }
 
 bootstrap().catch((error) => {

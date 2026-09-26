@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
+import { AvatarModule } from '../avatar/avatar.module.js';
 import { TimeModule } from '../common/time/time.module.js';
+import { ConversationsModule } from '../conversations/conversations.module.js';
 import { OrchestratorModule } from '../orchestrator/orchestrator.module.js';
 import { PendingActionsModule } from '../pending-actions/pending-actions.module.js';
 import { UsersModule } from '../users/users.module.js';
@@ -29,7 +31,9 @@ import { VoiceTurnService } from './voice-turn.service.js';
 @Module({
   imports: [
     AiProvidersModule,
+    AvatarModule,
     UsersModule,
+    ConversationsModule,
     OrchestratorModule,
     PendingActionsModule,
     TimeModule,

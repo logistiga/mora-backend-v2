@@ -65,6 +65,10 @@ export interface SelectProviderParams {
 /** Public-safe view of an AiProvider row — the API never returns key material. */
 export interface AiProviderPublicView {
   id: string;
+  /** True when the row has no owner (`user_id IS NULL`): a provider supplied
+   *  by Mora, shared by every user and manageable by ADMINs only. */
+  isSystem: boolean;
+  owner: 'user' | 'system';
   name: string;
   provider: string;
   kind: string;

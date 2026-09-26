@@ -13,6 +13,9 @@ export class DocumentProcessingProcessor extends WorkerHost {
   }
 
   async process(job: Job<DocumentProcessingJobData>): Promise<void> {
+    this.logger.debug(
+      `Processing document ${job.data.documentId} (requestId=${job.data.requestId ?? 'n/a'}, jobId=${job.id ?? 'n/a'})`,
+    );
     await this.pipeline.process(job.data.documentId, job.data.userId);
   }
 }

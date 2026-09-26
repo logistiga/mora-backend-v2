@@ -25,8 +25,8 @@ export class VoiceTurnService {
       latency: VoiceTurnLatency;
     },
   ): Promise<VoiceTurn> {
-    return this.prisma.voiceTurn.update({
-      where: { id },
+    const claimed = await this.prisma.voiceTurn.updateMany({
+      where: { id, status: 'in_progress' },
       data: {
         transcript: data.transcript,
         responseText: data.responseText,
@@ -39,6 +39,12 @@ export class VoiceTurnService {
         endedAt: new Date(),
       },
     });
+
+    if (claimed.count === 0) {
+      return this.prisma.voiceTurn.findUniqueOrThrow({ where: { id } });
+    }
+
+    return this.prisma.voiceTurn.findUniqueOrThrow({ where: { id } });
   }
 
   async interrupt(id: string): Promise<VoiceTurn> {

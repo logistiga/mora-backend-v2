@@ -104,4 +104,20 @@ describe('PersonalAgentService — time context & confirmation-contract regressi
     const result = await ctx.service.handle({ user, message: 'x', conversationId: 'c1', routerDecision });
     expect(result.toolCalls).toBeUndefined();
   });
+
+  it('adds an explicit voice interruption instruction so a topic change is answered directly', async () => {
+    await ctx.service.handle({
+      user,
+      message: 'Parle-moi de PostgreSQL',
+      conversationId: 'c1',
+      routerDecision,
+      channel: 'voice',
+      recentInterruption: true,
+    });
+
+    const systemPrompt = ctx.contextBuilder.build.mock.calls[0][0].systemPrompt as string;
+    expect(systemPrompt).toMatch(/interrompre Mora/i);
+    expect(systemPrompt).toMatch(/réponds directement/i);
+    expect(systemPrompt).toMatch(/ne reprends pas/i);
+  });
 });
