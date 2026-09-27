@@ -44,6 +44,26 @@ describe('MoraRouterService', () => {
     expect(short.method).toBe('rules');
   });
 
+  it('never leaves a request about the user own documents on the tool-less direct route (regression, stabilization K)', async () => {
+    llmServiceMock.complete.mockResolvedValue({
+      configured: true,
+      content: JSON.stringify({
+        route: 'direct',
+        space: 'direct',
+        intent: 'chercher une note',
+        confidence: 0.85,
+      }),
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    const result = await service.classify(
+      'Cherche dans mes documents ce que dit la note interne sur Atlas Logistique',
+    );
+    expect(result.route).toBe('personal');
+    expect(result.scope).toBe('personal');
+  });
+
   it('lets the LLM fallback classify a substantive greeting-opened message once no rule matches', async () => {
     llmServiceMock.complete.mockResolvedValue({
       configured: true,

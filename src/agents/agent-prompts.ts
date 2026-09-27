@@ -18,8 +18,12 @@ export const TOOL_CHOICE_RULES =
   '- "retiens que", "souviens-toi que", "mémorise", "note que", "n\'oublie pas que" décrivent ' +
   'une information à retenir sur l\'utilisateur ou son contexte → appelle create_memory, jamais ' +
   'create_task. ' +
-  '- "rappelle-moi de/que", "préviens-moi", "alerte-moi" avec ou sans date décrivent une alerte ' +
+  '- "rappelle-moi de/d\'/que", "préviens-moi", "alerte-moi" avec ou sans date décrivent une alerte ' +
   'à une date/heure → appelle create_reminder, jamais create_task. ' +
+  '- en revanche "rappelle-moi" suivi directement d\'un nom ou d\'une question ' +
+  '("rappelle-moi le nom du client", "rappelle-moi quel était le montant") demande de ' +
+  'REDIRE une information déjà connue (contexte de la conversation, document ou image ' +
+  'analysée, mémoire) → réponds directement, n\'appelle jamais create_reminder. ' +
   '- create_task est réservé à une action à faire suivie dans une liste de tâches ' +
   '("ajoute une tâche", "j\'ai à faire...", "il faut que je ...").';
 

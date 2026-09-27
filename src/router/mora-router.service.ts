@@ -34,6 +34,11 @@ const GREETING_PATTERN = /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|sala
 const GREETING_MAX_WORDS = 6;
 const FACTUAL_DIRECT_PATTERN = /\b(quelle heure|quel jour|quelle date)\b/i;
 
+// A message referring to the user's own stored data can never be answered on
+// the tool-less "direct" path — it needs an agent with the retrieval tools.
+const USER_DATA_PATTERN =
+  /\b(mes?|ma|mon)\s+(documents?|fichiers?|notes?|t[âa]ches?|rappels?|agenda|calendrier|rendez-vous|contacts?|mails?|emails?|e-mails?|messages?|conversations?|factures?|souvenirs?|m[ée]moires?)\b/i;
+
 const SENSITIVE_PATTERN =
   /\b(mot de passe|password|iban|carte bancaire|cvv|num[ée]ro de carte|secret|cl[ée] api|api key|credentials?|num[ée]ro de s[ée]curit[ée] sociale)\b/i;
 
@@ -65,6 +70,17 @@ export class MoraRouterService {
     // that never guesses into personal/professional territory.
     const llmResult = await this.classifyWithLlm(text, userId);
     if (llmResult) {
+      if (llmResult.route === 'direct' && USER_DATA_PATTERN.test(text)) {
+        return this.buildResult({
+          route: 'personal',
+          scope: 'personal',
+          space: 'personal',
+          intent: llmResult.intent,
+          text,
+          confidence: 0.7,
+          method: 'rules',
+        });
+      }
       return llmResult;
     }
 
@@ -178,7 +194,11 @@ export class MoraRouterService {
             role: 'system',
             content:
               'You classify a user message for a routing system. Respond with ONLY a JSON object: ' +
-              '{"route":"personal|professional|hybrid|direct","space":"personal|general|logistiga|piston|code|hybrid|direct","intent":"string","confidence":0-1}. No prose.',
+              '{"route":"personal|professional|hybrid|direct","space":"personal|general|logistiga|piston|code|hybrid|direct","intent":"string","confidence":0-1}. No prose. ' +
+              'Use "direct" ONLY for small talk or general knowledge that needs no access to the ' +
+              "user's own data. Any request mentioning the user's documents, files, tasks, " +
+              'reminders, calendar, contacts, emails, WhatsApp messages or stored memories must be ' +
+              '"personal" or "professional", never "direct".',
           },
           { role: 'user', content: text },
         ],
