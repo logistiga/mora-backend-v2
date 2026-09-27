@@ -36,11 +36,23 @@ export class ConversationsService {
     return this.getOrCreateConversation(userId, conversationId);
   }
 
-  async listConversations(userId: string): Promise<Conversation[]> {
-    return this.prisma.conversation.findMany({
+  /** Scope/space live on messages, not on the conversation row, so the list
+   *  exposes the scope of the conversation's most recent scoped user message —
+   *  what a client needs to badge a conversation Personal or Professional
+   *  without fetching every message. */
+  async listConversations(userId: string): Promise<(Conversation & { scope: string | null; space: string | null })[]> {
+    const conversations = await this.prisma.conversation.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
     });
+    if (conversations.length === 0) return [];
+
+    const scopes = await Promise.all(conversations.map((c) => this.getActiveScope(c.id)));
+    return conversations.map((conversation, index) => ({
+      ...conversation,
+      scope: scopes[index]?.scope ?? null,
+      space: scopes[index]?.space ?? null,
+    }));
   }
 
   async getConversationWithMessages(
@@ -97,6 +109,22 @@ export class ConversationsService {
         } as Prisma.InputJsonValue,
       },
     });
+  }
+
+  /**
+   * The scope/space the conversation is currently "in": the most recent
+   * user turn that was routed to a real scope ('personal'/'professional'),
+   * ignoring scope-neutral 'direct'/'hybrid' turns. Used by the
+   * orchestrator to keep a follow-up question inside the thread it belongs
+   * to instead of re-classifying it from its text alone.
+   */
+  async getActiveScope(conversationId: string): Promise<{ scope: string; space: string } | null> {
+    const message = await this.prisma.message.findFirst({
+      where: { conversationId, role: MessageRole.USER, scope: { in: ['personal', 'professional'] } },
+      orderBy: { createdAt: 'desc' },
+      select: { scope: true, space: true },
+    });
+    return message ? { scope: message.scope, space: message.space } : null;
   }
 
   /**

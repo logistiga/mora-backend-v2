@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
@@ -29,6 +29,11 @@ export class WhatsAppController {
   @Post('accounts')
   async createAccount(@CurrentUser() user: AuthenticatedUser, @Body() dto: CreateWhatsAppAccountDto) {
     return this.accountService.create(user.id, dto);
+  }
+
+  @Delete('accounts/:id')
+  async deleteAccount(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.accountService.remove(user.id, id);
   }
 
   @Get('accounts/:id/health')

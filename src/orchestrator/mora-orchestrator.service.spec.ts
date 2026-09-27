@@ -12,6 +12,7 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
       id: role === 'USER' ? 'user-msg-1' : 'assistant-msg-1',
     })),
     getScopedHistory: vi.fn(async () => []),
+    getActiveScope: vi.fn(async () => null as { scope: string; space: string } | null),
   };
   const routerDecisionsService = { save: vi.fn() };
   const auditService = { log: vi.fn() };
@@ -154,6 +155,118 @@ describe('MoraOrchestratorService', () => {
     expect(ctx.auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: expect.objectContaining({ crossScopeBlocked: true }) }),
     );
+  });
+
+  it('answers a general "direct" question with a real LLM reply instead of "D\'accord."', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'direct',
+      scope: 'direct',
+      space: 'direct',
+      intent: 'question',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.8,
+      method: 'rules',
+    });
+    ctx.llmService.complete.mockResolvedValue({
+      configured: true,
+      content: 'La capitale du Maroc est Rabat.',
+      provider: 'openai',
+      model: null,
+    });
+
+    const result = await ctx.service.handleMessage({ user, message: 'Quelle est la capitale du Maroc ?' });
+
+    expect(ctx.llmService.complete).toHaveBeenCalledOnce();
+    expect(result.response).toBe('La capitale du Maroc est Rabat.');
+    expect(result.response).not.toMatch(/^D'accord\.$/);
+  });
+
+  it('falls back to a plain reply for a "direct" question when no LLM is configured', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'direct',
+      scope: 'direct',
+      space: 'direct',
+      intent: 'unknown',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.4,
+      method: 'rules',
+    });
+
+    const result = await ctx.service.handleMessage({ user, message: 'hmm' });
+
+    expect(result.response).toMatch(/pas certain de bien comprendre/i);
+  });
+
+  it('keeps a follow-up inside the conversation scope instead of answering it as "direct"', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'direct',
+      scope: 'direct',
+      space: 'direct',
+      intent: 'question',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.5,
+      method: 'default-fallback',
+    });
+    ctx.conversationsService.getActiveScope.mockResolvedValue({ scope: 'personal', space: 'personal' });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'Le montant est 1 250 EUR.', metadata: {} });
+
+    const result = await ctx.service.handleMessage({
+      user,
+      message: 'Et quel est le montant exact en chiffres ?',
+      conversationId: 'conv-1',
+    });
+
+    expect(ctx.personalAgent.handle).toHaveBeenCalledOnce();
+    expect(result.route).toBe('personal');
+    expect(result.space).toBe('personal');
+    expect(result.response).toBe('Le montant est 1 250 EUR.');
+  });
+
+  it('continues a cross-scope-looking follow-up in the conversation scope rather than blocking it', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'hybrid',
+      scope: 'hybrid',
+      space: 'hybrid',
+      intent: 'question',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.6,
+      method: 'rules',
+    });
+    ctx.conversationsService.getActiveScope.mockResolvedValue({ scope: 'personal', space: 'personal' });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'Jean Dupont.', metadata: {} });
+
+    const result = await ctx.service.handleMessage({
+      user,
+      message: 'Rappelle-moi le nom du client sur cette facture.',
+      conversationId: 'conv-1',
+    });
+
+    expect(result.route).toBe('personal');
+    expect(result.response).toBe('Jean Dupont.');
+  });
+
+  it('never overrides an explicitly scoped classification with the conversation scope', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'professional',
+      scope: 'professional',
+      space: 'code',
+      intent: 'question',
+      complexity: 'low',
+      securityLevel: 'low',
+      confidence: 0.9,
+      method: 'rules',
+    });
+    ctx.conversationsService.getActiveScope.mockResolvedValue({ scope: 'personal', space: 'personal' });
+    ctx.professionalAgent.handle.mockResolvedValue({ content: 'ok pro', metadata: {} });
+
+    const result = await ctx.service.handleMessage({ user, message: 'Comment marche ce script ?', conversationId: 'conv-1' });
+
+    expect(result.route).toBe('professional');
+    expect(result.space).toBe('code');
   });
 
   it('persists the user message, the assistant message, and the router decision', async () => {

@@ -93,6 +93,8 @@ export class MoraOrchestratorService {
     let decision = await this.routerService.classify(input.message, input.user.id);
     if (input.routingOverride) {
       decision = { ...decision, ...input.routingOverride, confidence: Math.max(decision.confidence, 0.95) };
+    } else {
+      decision = await this.applyConversationContinuity(conversation.id, decision);
     }
 
     // Saved BEFORE dispatch: ContextBuilderService/getScopedHistory reads
@@ -175,7 +177,7 @@ export class MoraOrchestratorService {
     externalContextNotes: string[],
   ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
     if (decision.route === 'direct') {
-      return { content: this.buildDirectReply(decision), metadata: { agent: 'direct' } };
+      return this.handleDirect(user, message, decision);
     }
 
     if (decision.route === 'hybrid') {
@@ -329,10 +331,101 @@ export class MoraOrchestratorService {
     return result.ok ? 'Action effectuée.' : "L'action a échoué.";
   }
 
-  private buildDirectReply(decision: RouterDecisionResult): string {
-    if (decision.intent === 'greeting') {
-      return 'Bonjour ! Comment puis-je vous aider aujourd\'hui ?';
+  /**
+   * The router classifies each message from its text alone, so a follow-up
+   * that only makes sense against the previous turn ("Et le montant exact
+   * ?", "Rappelle-moi le nom du client sur cette facture.") gets its own
+   * route: 'direct' (canned reply, no history, no vision context) or
+   * 'hybrid' (blocked as cross-scope). Both drop the thread the user is
+   * clearly still in — this is the root cause behind the "vision follow-up
+   * loses the image" report.
+   *
+   * A conversation that already has a scope therefore keeps it whenever
+   * the new turn is not itself scoped. This never widens access: it moves
+   * a turn from no-scope/both-scopes into the single scope whose history
+   * the user is already reading, and an explicitly scoped classification
+   * ('personal'/'professional') is always left untouched, so switching
+   * subject mid-conversation still works.
+   */
+  private async applyConversationContinuity(
+    conversationId: string,
+    decision: RouterDecisionResult,
+  ): Promise<RouterDecisionResult> {
+    if (decision.route !== 'direct' && decision.route !== 'hybrid') {
+      return decision;
     }
+    if (decision.route === 'direct' && decision.intent === 'greeting') {
+      return decision;
+    }
+
+    const active = await this.conversationsService.getActiveScope(conversationId);
+    if (!active || (active.scope !== 'personal' && active.scope !== 'professional')) {
+      return decision;
+    }
+
+    this.logger.debug(
+      `Conversation continuity: "${decision.route}" turn continued as ${active.scope}/${active.space}`,
+    );
+    return {
+      ...decision,
+      route: active.scope as RouterDecisionResult['route'],
+      scope: active.scope as RouterDecisionResult['scope'],
+      space: active.space as RouterDecisionResult['space'],
+      method: 'continuity',
+    };
+  }
+
+  /**
+   * `direct` is the no-scope lane: small talk and general-knowledge
+   * questions that belong to neither the personal nor the professional
+   * agent. It used to return a canned string for everything, so a plain
+   * question ("Quelle est la capitale du Maroc ?") — which the router
+   * legitimately classifies as `direct` — was answered with "D'accord."
+   * and read as a refusal. Greetings stay canned (free and instant);
+   * anything else gets a real, contextless LLM answer with no memory, no
+   * tools and no scoped history, so nothing leaks across scopes.
+   */
+  private async handleDirect(
+    user: AgentUser,
+    message: string,
+    decision: RouterDecisionResult,
+  ): Promise<{ content: string; metadata: Record<string, unknown> }> {
+    if (decision.intent === 'greeting') {
+      return { content: "Bonjour ! Comment puis-je vous aider aujourd'hui ?", metadata: { agent: 'direct' } };
+    }
+
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              `Tu es Mora, l'assistant de ${user.displayName}. ` +
+              "Réponds directement et de façon concise à la question ou au message ci-dessous, en français. " +
+              "Tu n'as ici accès ni aux données personnelles ni aux données professionnelles de l'utilisateur : " +
+              "réponds uniquement sur des connaissances générales. Si la demande nécessite réellement ses " +
+              "données personnelles ou professionnelles, dis-le simplement et demande la précision utile — " +
+              'sans jamais inventer de contenu le concernant.',
+          },
+          { role: 'user', content: message },
+        ],
+        temperature: 0.4,
+        maxTokens: 500,
+      },
+      { userId: user.id, scope: decision.scope, space: decision.space, route: 'direct' },
+    );
+
+    if (response.configured && response.content.trim().length > 0) {
+      return {
+        content: response.content,
+        metadata: { agent: 'direct', llmConfigured: true, llmProvider: response.provider },
+      };
+    }
+
+    return { content: this.buildDirectFallbackReply(decision), metadata: { agent: 'direct', llmConfigured: false } };
+  }
+
+  private buildDirectFallbackReply(decision: RouterDecisionResult): string {
     if (decision.intent === 'unknown') {
       return "Je ne suis pas certain de bien comprendre votre demande. Pouvez-vous préciser s'il s'agit d'un sujet personnel ou professionnel ?";
     }

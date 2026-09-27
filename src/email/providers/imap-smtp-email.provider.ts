@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { classifyConnectionError } from '../../common/connections/connection-error.util.js';
 import type {
   EmailProviderInterface,
   EmailSendResult,
@@ -103,7 +104,8 @@ export class ImapSmtpEmailProvider implements EmailProviderInterface {
       await client.logout();
       return { connected: true };
     } catch (error) {
-      return { connected: false, error: error instanceof Error ? error.message.slice(0, 200) : 'unknown error' };
+      // Never return the raw IMAP failure: it embeds host, port and mailbox.
+      return { connected: false, error: classifyConnectionError(error) };
     }
   }
 }

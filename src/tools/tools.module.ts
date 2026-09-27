@@ -21,6 +21,7 @@ import { CalendarUpdateEventTool } from './impl/calendar-update-event.tool.js';
 import { CancelReminderTool } from './impl/cancel-reminder.tool.js';
 import { CompleteTaskTool } from './impl/complete-task.tool.js';
 import { CreateContactTool } from './impl/create-contact.tool.js';
+import { CreateMemoryTool } from './impl/create-memory.tool.js';
 import { CreateReminderTool } from './impl/create-reminder.tool.js';
 import { CreateTaskTool } from './impl/create-task.tool.js';
 import { DraftActionTool } from './impl/draft-action.tool.js';
@@ -75,6 +76,7 @@ const PHASE_D_TOOLS = [
   ListRemindersTool,
   CancelReminderTool,
   SearchMemoriesTool,
+  CreateMemoryTool,
   GetProfileFactsTool,
   ListPendingActionsTool,
   DraftActionTool,

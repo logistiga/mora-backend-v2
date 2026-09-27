@@ -49,6 +49,21 @@ describe('VoiceConfirmationService', () => {
     expect(service.classify('Laisse tomber.')).toBe('deny');
   });
 
+  /**
+   * Issue O (Phase G stabilization): explicit spoken refusals that use
+   * "refuser" rather than "non"/"annule" fell outside the negative list, so
+   * the turn was treated as a brand new message and the pending action was
+   * left open instead of being rejected.
+   */
+  it('classifies explicit refusals built on "refuser"', () => {
+    expect(service.classify('Je refuse.')).toBe('deny');
+    expect(service.classify('Non, je refuse')).toBe('deny');
+    expect(service.classify('Je refuse cette action.')).toBe('deny');
+    expect(service.classify("N'en fais rien.")).toBe('deny');
+    expect(service.classify('Surtout pas.')).toBe('deny');
+    expect(service.classify('Pas maintenant.')).toBe('deny');
+  });
+
   it('never classifies a short but unrelated sentence containing a generic word as a confirmation', () => {
     // "vas" alone (from "vas-tu") must NOT trigger 'vas-y'-style matching.
     expect(service.classify('Comment vas-tu ?')).toBe('none');

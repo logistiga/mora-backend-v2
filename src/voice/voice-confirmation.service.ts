@@ -45,13 +45,36 @@ const AFFIRMATIVE_WORDS = [
   'confirm',
   'confirmed',
 ];
-const NEGATIVE_WORDS = ['non', 'annule', 'annulé', 'annuler', 'stop', 'jamais', 'no', 'cancel'];
+const NEGATIVE_WORDS = [
+  'non',
+  'nan',
+  'annule',
+  'annulé',
+  'annuler',
+  'refuse',
+  'refusé',
+  'refuser',
+  'stop',
+  'jamais',
+  'no',
+  'nope',
+  'cancel',
+  'decline',
+];
 
 // Multi-word markers checked as substrings of the normalized transcript —
 // deliberately NOT single tokens, since a word like "vas" alone is far too
 // generic ("Comment vas-tu ?" must never be read as a confirmation).
 const AFFIRMATIVE_PHRASES = ['vas y', 'cest bon', 'go ahead', 'sounds good'];
-const NEGATIVE_PHRASES = ["ne fais pas", 'pas question', 'laisse tomber', 'never mind'];
+const NEGATIVE_PHRASES = [
+  'ne fais pas',
+  'nen fais rien',
+  'pas question',
+  'pas maintenant',
+  'surtout pas',
+  'laisse tomber',
+  'never mind',
+];
 
 function normalize(text: string): string {
   return text

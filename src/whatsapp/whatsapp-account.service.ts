@@ -91,6 +91,14 @@ export class WhatsAppAccountService {
     };
   }
 
+  /** Removes the account and, by cascade, its conversations and messages,
+   *  including the encrypted Evolution credentials stored on the row. */
+  async remove(userId: string, id: string): Promise<{ id: string; deleted: true }> {
+    await this.getOwnedRow(userId, id);
+    await this.prisma.whatsAppAccount.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   async updateHealth(accountId: string, status: string, lastError?: string): Promise<void> {
     await this.prisma.whatsAppAccount.update({
       where: { id: accountId },

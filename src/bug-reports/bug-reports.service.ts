@@ -21,12 +21,22 @@ export class BugReportsService {
   async create(user: AuthenticatedUser, dto: CreateBugReportDto): Promise<BugReport> {
     const context = this.requestContext.get();
 
-    const metadata = sanitizeBugReportMetadata(dto.metadata) as Prisma.InputJsonValue | undefined;
+    // `requestId`/`apiRoute` identify the request the user is REPORTING, so
+    // they only ever come from the client. Defaulting them to the current
+    // request context would silently attach the bug report's own POST
+    // /bug-reports call — an id that leads investigators to the report
+    // instead of the failure. The report's own context is kept separately
+    // under metadata.report for traceability.
+    const sanitizedMetadata = sanitizeBugReportMetadata(dto.metadata);
+    const metadata = {
+      ...sanitizedMetadata,
+      report: { requestId: context?.requestId ?? null, path: context?.path ?? null },
+    } as Prisma.InputJsonValue;
 
     return this.prisma.bugReport.create({
       data: {
         userId: user.id,
-        requestId: dto.requestId ?? context?.requestId,
+        requestId: dto.requestId ?? null,
         conversationId: dto.conversationId,
         voiceSessionId: dto.voiceSessionId,
         category: dto.category,
@@ -34,7 +44,7 @@ export class BugReportsService {
         title: sanitizeBugReportText(dto.title) ?? 'Untitled bug report',
         description: sanitizeBugReportText(dto.description) ?? 'No description',
         frontendRoute: sanitizeBugReportText(dto.frontendRoute),
-        apiRoute: sanitizeBugReportText(dto.apiRoute) ?? context?.path,
+        apiRoute: sanitizeBugReportText(dto.apiRoute),
         browserInfo: sanitizeBugReportText(dto.browserInfo),
         appVersion: sanitizeBugReportText(dto.appVersion),
         metadata,

@@ -54,7 +54,7 @@ describe('Bug Reports (e2e)', () => {
     await app.close();
   });
 
-  it('creates a bug report, preserves requestId, and sanitizes metadata', async () => {
+  it('creates a bug report, keeps the reported requestId, and sanitizes metadata', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/bug-reports')
       .set('Authorization', `Bearer ${userToken}`)
@@ -64,6 +64,8 @@ describe('Bug Reports (e2e)', () => {
         severity: 'high',
         title: 'Avatar freeze',
         description: 'Avatar freeze after reconnect',
+        requestId: 'req-of-the-failing-call',
+        apiRoute: '/api/v1/voice/sessions',
         metadata: {
           panel: 'voice',
           apiKey: 'sk-should-never-store',
@@ -73,9 +75,25 @@ describe('Bug Reports (e2e)', () => {
 
     expect(res.status).toBe(201);
     expect(res.headers['x-request-id']).toBe('req-bug-e2e-1');
-    expect(res.body.requestId).toBe('req-bug-e2e-1');
-    expect(res.body.metadata).toEqual({ panel: 'voice', nested: { step: 'after reconnect' } });
+    // The reported failure's id, never the id of this POST /bug-reports call.
+    expect(res.body.requestId).toBe('req-of-the-failing-call');
+    expect(res.body.apiRoute).toBe('/api/v1/voice/sessions');
+    expect(res.body.metadata).toMatchObject({ panel: 'voice', nested: { step: 'after reconnect' } });
+    expect(res.body.metadata.report).toEqual({ requestId: 'req-bug-e2e-1', path: '/api/v1/bug-reports' });
     reportId = res.body.id;
+  });
+
+  it('does not attach its own request id when the client reports none', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/bug-reports')
+      .set('Authorization', `Bearer ${userToken}`)
+      .set('X-Request-Id', 'req-bug-e2e-3')
+      .send({ category: 'ui', severity: 'low', title: 'No request id', description: 'Nothing to correlate' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.requestId).toBeNull();
+    expect(res.body.apiRoute).toBeNull();
+    expect(res.body.metadata.report.requestId).toBe('req-bug-e2e-3');
   });
 
   it('returns requestId in validation errors', async () => {

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { classifyConnectionError } from '../../common/connections/connection-error.util.js';
 import type {
   ResolvedWhatsAppConnection,
   WhatsAppProviderInterface,
@@ -65,13 +66,14 @@ export class EvolutionWhatsAppProvider implements WhatsAppProviderInterface {
         headers: { apikey: connection.apiKey ?? '' },
       });
       if (!response.ok) {
-        return { connected: false, error: `status ${response.status}` };
+        return { connected: false, error: response.status === 401 || response.status === 403 ? 'auth_failed' : 'rejected_by_provider' };
       }
       const data = (await response.json()) as { instance?: { state?: string } };
       return { connected: data.instance?.state === 'open' };
     } catch (error) {
-      // Never leak a raw stack/internal detail into stored health state.
-      return { connected: false, error: error instanceof Error ? error.message.slice(0, 200) : 'unknown error' };
+      // Never leak a raw stack/internal detail (base URL, instance id) into
+      // stored health state or the health response.
+      return { connected: false, error: classifyConnectionError(error) };
     }
   }
 }

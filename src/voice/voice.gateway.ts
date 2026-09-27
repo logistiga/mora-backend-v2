@@ -516,9 +516,16 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       });
       state.currentAssistantMessageId = null;
     }
+    // A pending action the user has ALREADY been asked about stays open: the
+    // question was delivered (action.pending_confirmation was emitted and the
+    // id is in openPendingActionIds), so talking over the spoken question must
+    // only stop the audio, never destroy an action the user can still answer —
+    // by voice on the next turn or through the REST approve/reject routes.
+    // Only an action the client never heard about is cancelled here.
     if (state.currentPendingActionId) {
-      state.openPendingActionIds.delete(state.currentPendingActionId);
-      void this.pendingActionService.cancel(state.userId, state.currentPendingActionId, 'voice_interrupted');
+      if (!state.openPendingActionIds.has(state.currentPendingActionId)) {
+        void this.pendingActionService.cancel(state.userId, state.currentPendingActionId, 'voice_interrupted');
+      }
       state.currentPendingActionId = null;
     }
     if (hadActiveTts || hadActiveTurn) {

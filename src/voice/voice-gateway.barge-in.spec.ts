@@ -59,8 +59,30 @@ function makeGateway() {
     send: vi.fn(),
   };
 
-  return { gateway, state, socket, turnRunner, turnService };
+  return { gateway, state, socket, turnRunner, turnService, pendingActionService };
 }
+
+describe('VoiceGateway — interrupting a confirmation question', () => {
+  it('keeps an already-asked pending action confirmable when the user talks over the question', () => {
+    const { gateway, state, pendingActionService } = makeGateway();
+    state.currentPendingActionId = 'pending-1';
+    state.openPendingActionIds.add('pending-1');
+
+    (gateway as any).interrupt('session-1');
+
+    expect(pendingActionService.cancel).not.toHaveBeenCalled();
+    expect(state.openPendingActionIds.has('pending-1')).toBe(true);
+  });
+
+  it('cancels a pending action the client was never told about', () => {
+    const { gateway, state, pendingActionService } = makeGateway();
+    state.currentPendingActionId = 'pending-2';
+
+    (gateway as any).interrupt('session-1');
+
+    expect(pendingActionService.cancel).toHaveBeenCalledWith('user-1', 'pending-2', 'voice_interrupted');
+  });
+});
 
 describe('VoiceGateway — stale STT finalize guard (Phase F barge-in regression)', () => {
   it('ignores a stale transcript if an older STT finalize resolves after a newer generation already started', async () => {

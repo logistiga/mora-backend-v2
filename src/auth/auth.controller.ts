@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
-import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiNoContentResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service.js';
@@ -41,7 +41,12 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(JwtRefreshGuard)
-  async logout(@Req() req: Request): Promise<void> {
+  @ApiBody({ type: RefreshDto })
+  @ApiNoContentResponse({ description: 'Refresh token revoked' })
+  // The body is what authenticates the call (the refresh JWT is read from
+  // `refreshToken`, never from the Authorization header), so it has to be
+  // declared for clients generated from the OpenAPI document.
+  async logout(@Body() _dto: RefreshDto, @Req() req: Request): Promise<void> {
     const payload = req.user as JwtRefreshPayload;
     await this.authService.logout(payload.jti);
   }

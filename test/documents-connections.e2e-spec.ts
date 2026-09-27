@@ -209,6 +209,63 @@ describe('Documents & Connections (e2e)', () => {
     });
   });
 
+  // Z1: a user must be able to disconnect a mailbox / WhatsApp number, which
+  // is also the only way to remove its stored encrypted credentials.
+  describe('Connection account deletion', () => {
+    it('deletes an email account with its encrypted credentials, and only its owner can', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/email/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          label: 'E2E mailbox',
+          address: 'e2e-mailbox@example.com',
+          provider: 'imap_smtp',
+          imapHost: 'imap.example.com',
+          imapPort: 993,
+          smtpHost: 'smtp.example.com',
+          smtpPort: 465,
+          username: 'e2e-mailbox@example.com',
+          password: 'not-a-real-password',
+        });
+      expect(created.status).toBe(201);
+      const accountId = created.body.id as string;
+
+      const foreign = await request(app.getHttpServer())
+        .delete(`/api/v1/email/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${otherAccessToken}`);
+      expect(foreign.status).toBe(403);
+
+      const deleted = await request(app.getHttpServer())
+        .delete(`/api/v1/email/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`);
+      expect(deleted.status).toBe(200);
+
+      expect(await prisma.emailAccount.findUnique({ where: { id: accountId } })).toBeNull();
+    });
+
+    it('deletes a WhatsApp account', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/api/v1/whatsapp/accounts')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          label: 'E2E WhatsApp',
+          phoneNumber: '+33600000000',
+          provider: 'evolution',
+          config: { baseUrl: 'https://evolution.invalid', instanceId: 'e2e-instance' },
+          apiKey: 'not-a-real-key',
+        });
+      expect(created.status).toBe(201);
+      const accountId = created.body.id as string;
+
+      const deleted = await request(app.getHttpServer())
+        .delete(`/api/v1/whatsapp/accounts/${accountId}`)
+        .set('Authorization', `Bearer ${accessToken}`);
+      expect(deleted.status).toBe(200);
+
+      expect(await prisma.whatsAppAccount.findUnique({ where: { id: accountId } })).toBeNull();
+    });
+  });
+
   describe('Calendar REST', () => {
     let eventId: string;
 

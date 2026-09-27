@@ -89,6 +89,15 @@ export class EmailAccountService {
     };
   }
 
+  /** Removes the account and, by cascade, its threads and messages. The
+   *  encrypted IMAP/SMTP credentials go with the row — a user disconnecting
+   *  a mailbox must leave nothing of it behind. */
+  async remove(userId: string, id: string): Promise<{ id: string; deleted: true }> {
+    await this.getOwnedRow(userId, id);
+    await this.prisma.emailAccount.delete({ where: { id } });
+    return { id, deleted: true };
+  }
+
   async updateHealth(accountId: string, status: string, lastError?: string): Promise<void> {
     await this.prisma.emailAccount.update({
       where: { id: accountId },

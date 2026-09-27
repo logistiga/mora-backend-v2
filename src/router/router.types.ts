@@ -4,7 +4,8 @@ export type ProfessionalSpace = 'general' | 'logistiga' | 'piston' | 'code';
 export type MoraSpace = 'direct' | 'personal' | 'hybrid' | ProfessionalSpace;
 export type MoraComplexity = 'low' | 'medium' | 'high';
 export type MoraSecurityLevel = 'low' | 'medium' | 'high';
-export type RouterMethod = 'rules' | 'llm-fallback' | 'default-fallback';
+/** `continuity`: kept in the conversation's existing scope by the orchestrator (see applyConversationContinuity). */
+export type RouterMethod = 'rules' | 'llm-fallback' | 'default-fallback' | 'continuity';
 
 export interface RouterDecisionResult {
   route: MoraRoute;
