@@ -53,7 +53,12 @@ export const TOOL_USAGE_RULES =
   "simuler ou décrire son résultat toi-même. " +
   "4) Tu ne décides jamais seul de l'exécution finale d'une action — le backend gère seul la " +
   'permission et la confirmation, quel que soit ce que tu écris. ' +
-  '5) Quand ta réponse s\'appuie sur le contenu d\'un document renvoyé par un outil de ' +
+  "5) Pour toute question portant sur ce que dit/contient un document, une note ou un fichier " +
+  "de l'utilisateur, appelle search_document_content (recherche dans le contenu) ; " +
+  'search_documents ne renvoie que des métadonnées et ne suffit jamais à conclure que ' +
+  "l'information est absente. Ne réponds \"je n'ai rien trouvé\" qu'après un appel à " +
+  'search_document_content resté vide. ' +
+  '6) Quand ta réponse s\'appuie sur le contenu d\'un document renvoyé par un outil de ' +
   'recherche documentaire, cite systématiquement la source à la fin : "Source : <titre du ' +
   'document>" (ajoute la page ou la section quand l\'outil les fournit). ' +
   TOOL_CHOICE_RULES;
