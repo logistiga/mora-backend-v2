@@ -211,4 +211,38 @@ describe('MoraRouterService', () => {
       expect(result.route).toBe('direct');
     });
   });
+  describe('explicit "personnel" wording wins over business keywords (regression, stabilization K)', () => {
+    it('routes "mes documents personnels ... contrat" to personal, not professional', async () => {
+      const result = await service.classify(
+        'Dans mes documents personnels, qui est mon transporteur de secours et quand expire le contrat ?',
+      );
+      expect(result.route).toBe('personal');
+      expect(result.scope).toBe('personal');
+      expect(result.space).toBe('personal');
+    });
+
+    it('overrides an LLM "professional" classification when the user said "personnelle"', async () => {
+      llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          route: 'professional',
+          space: 'general',
+          intent: 'question',
+          confidence: 0.9,
+        }),
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+      });
+      const result = await service.classify(
+        'Quelle est la date inscrite sur ma fiche personnelle de suivi transporteur ?',
+      );
+      expect(result.route).toBe('personal');
+      expect(result.space).toBe('personal');
+    });
+
+    it('still routes a plain business question to professional', async () => {
+      const result = await service.classify('Il faut préparer la facture pour le client');
+      expect(result.route).toBe('professional');
+    });
+  });
 });
