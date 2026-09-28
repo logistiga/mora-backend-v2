@@ -17,7 +17,10 @@ class SearchDocumentsInput {
 @Injectable()
 export class SearchDocumentsTool implements MoraTool<SearchDocumentsInput> {
   readonly name = 'search_documents';
-  readonly description = "Liste/filtre les documents de l'utilisateur (type, tags) dans le scope/space courant.";
+  readonly description =
+    "Liste les MÉTADONNÉES des documents de l'utilisateur (titre, type, date, résumé) dans le " +
+    "scope/space courant. N'accède PAS au contenu : pour répondre à une question sur ce que " +
+    'contient un document, utiliser search_document_content.';
   readonly version = '1.0.0';
   readonly securityLevel = 'N1' as const;
   readonly allowedScopes = ['personal', 'professional'] as const;

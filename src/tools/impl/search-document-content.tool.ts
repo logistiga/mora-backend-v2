@@ -22,7 +22,10 @@ class SearchDocumentContentInput {
 @Injectable()
 export class SearchDocumentContentTool implements MoraTool<SearchDocumentContentInput> {
   readonly name = 'search_document_content';
-  readonly description = 'Recherche sémantique/texte dans le contenu des documents (chunks pertinents avec provenance).';
+  readonly description =
+    'Recherche sémantique/texte DANS LE CONTENU des documents (extraits pertinents avec ' +
+    "provenance : titre, page, section). À utiliser dès qu'une question porte sur ce que dit, " +
+    'contient ou mentionne un document, une note ou un fichier de l\'utilisateur.';
   readonly version = '1.0.0';
   readonly securityLevel = 'N1' as const;
   readonly allowedScopes = ['personal', 'professional'] as const;

@@ -11,8 +11,14 @@ import type {
 // French-first, intentionally simple regexes. Extend these lists rather than
 // reaching for the LLM fallback for new common phrasings.
 
+// Explicit "personnel(le)(s)" / "perso" / "privé" wording is a direct statement of
+// intent from the user: it wins over professional keywords that happen to appear
+// in the same sentence ("mes documents personnels … le contrat") and over an LLM
+// classification that only saw the business vocabulary.
+const EXPLICIT_PERSONAL_PATTERN = /\b(personnels?|personnelles?|perso|priv[ée]e?s?)\b/i;
+
 const PERSONAL_PATTERN =
-  /\b(personnel(le)?|priv[ée]e?|ma famille|mon mari|ma femme|mes enfants|mon fils|ma fille|mon anniversaire|rendez-vous perso|rdv perso|rappelle[- ]moi|mon agenda perso|mes vacances|ma sant[ée]|mon m[ée]decin|mon compte perso)\b/i;
+  /\b(personnel(le)?s?|priv[ée]e?s?|ma famille|mon mari|ma femme|mes enfants|mon fils|ma fille|mon anniversaire|rendez-vous perso|rdv perso|rappelle[- ]moi|mon agenda perso|mes vacances|ma sant[ée]|mon m[ée]decin|mon compte perso)\b/i;
 
 const PROFESSIONAL_SPACE_PATTERNS: Array<{ space: ProfessionalSpace; pattern: RegExp }> = [
   { space: 'logistiga', pattern: /\blogistiga\b/i },
@@ -78,6 +84,17 @@ export class MoraRouterService {
     // that never guesses into personal/professional territory.
     const llmResult = await this.classifyWithLlm(text, userId);
     if (llmResult) {
+      if (llmResult.route === 'professional' && EXPLICIT_PERSONAL_PATTERN.test(text)) {
+        return this.buildResult({
+          route: 'personal',
+          scope: 'personal',
+          space: 'personal',
+          intent: llmResult.intent,
+          text,
+          confidence: 0.75,
+          method: 'rules',
+        });
+      }
       return llmResult;
     }
 
@@ -104,6 +121,18 @@ export class MoraRouterService {
     const professionalGeneralMatch = PROFESSIONAL_GENERAL_PATTERN.test(text);
     const professionalMatch = Boolean(professionalSpaceMatch) || professionalGeneralMatch;
     const professionalSpace: ProfessionalSpace = professionalSpaceMatch?.space ?? 'general';
+
+    if (!professionalSpaceMatch && EXPLICIT_PERSONAL_PATTERN.test(text)) {
+      return this.buildResult({
+        route: 'personal',
+        scope: 'personal',
+        space: 'personal',
+        intent: this.detectIntent(text),
+        text,
+        confidence: 0.85,
+        method: 'rules',
+      });
+    }
 
     if (personalMatch && professionalMatch) {
       return this.buildResult({
