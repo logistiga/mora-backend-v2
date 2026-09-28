@@ -125,15 +125,19 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Tears down the live socket of a session that was ended elsewhere (REST
-   * `POST /voice/sessions/:id/end`), so a socket can never stay attached to
-   * an `ended` session.
+   * Single teardown path for an ended session, whether it was ended through
+   * the socket (`session.end`) or through REST (`POST /voice/sessions/:id/end`),
+   * so a socket can never stay attached to an `ended` session. Emits the
+   * documented sequence exactly once: avatar.state `disconnected` →
+   * `session.ended` → close 1000. Idempotent: the socket is unregistered
+   * here, so a second call is a no-op.
    */
   private closeSessionSocket(sessionId: string): void {
     const socket = this.sockets.get(sessionId);
     if (!socket) return;
     this.stopActiveGeneration(sessionId);
     if (socket.readyState === WebSocket.OPEN) {
+      this.emitAvatarState(socket, this.runtimeRegistry.get(sessionId), 'disconnected');
       this.sendEvent(socket, { event: 'session.ended' });
       socket.close(1000, 'ended');
     }
@@ -274,10 +278,12 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
 
       case 'session.end': {
         if (currentSessionId) {
+          // end() notifies closeSessionSocket(), which emits avatar.state
+          // disconnected + session.ended and closes. The explicit call covers
+          // a session that was already ended (no notification) or a failed
+          // end(); it is a no-op once the socket has been torn down.
           await this.sessionService.end(userId, currentSessionId).catch(() => undefined);
-          this.emitAvatarState(socket, this.runtimeRegistry.get(currentSessionId), 'disconnected');
-          this.sendEvent(socket, { event: 'session.ended' });
-          socket.close(1000, 'ended');
+          this.closeSessionSocket(currentSessionId);
         }
         break;
       }
