@@ -8,7 +8,7 @@ export class ListEventsQueryDto {
   @IsIn(CALENDAR_SCOPES)
   scope?: 'personal' | 'professional';
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Omit to list the events of every space of the scope' })
   @IsOptional()
   @IsString()
   space?: string;

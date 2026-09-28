@@ -77,6 +77,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
     this.wss = new WebSocketServer({ server: httpServer, path: '/voice/ws' });
     this.wss.on('connection', (socket, request) => this.handleConnection(socket, request));
+    this.sessionService.onSessionEnded((sessionId) => this.closeSessionSocket(sessionId));
     this.logger.log('Voice WebSocket gateway attached at /voice/ws');
   }
 
@@ -121,6 +122,23 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     socket.on('error', (error) => {
       this.logger.warn(`Voice socket error: ${String(error)}`);
     });
+  }
+
+  /**
+   * Tears down the live socket of a session that was ended elsewhere (REST
+   * `POST /voice/sessions/:id/end`), so a socket can never stay attached to
+   * an `ended` session.
+   */
+  private closeSessionSocket(sessionId: string): void {
+    const socket = this.sockets.get(sessionId);
+    if (!socket) return;
+    this.stopActiveGeneration(sessionId);
+    if (socket.readyState === WebSocket.OPEN) {
+      this.sendEvent(socket, { event: 'session.ended' });
+      socket.close(1000, 'ended');
+    }
+    this.sockets.delete(sessionId);
+    this.runtimeRegistry.destroy(sessionId);
   }
 
   private authenticate(request: IncomingMessage): { userId: string } | null {
@@ -396,7 +414,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    this.sendEvent(socket, { event: 'transcript.final', data: { text: transcript } });
+    this.sendEvent(socket, { event: 'transcript.final', data: { text: transcript, generationId: sttGenerationId } });
     await this.sessionService.transition(sessionId, 'thinking').catch(() => undefined);
     if (!isCurrentInputGeneration()) {
       voiceDebug('stale_stt_finalize_dropped', {
@@ -438,14 +456,14 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     let audioChunkCount = 0;
     const events: VoiceTurnEvents = {
       onAssistantThinkingStarted: () => {
-        this.sendEvent(socket, { event: 'assistant.thinking.started' });
+        this.sendEvent(socket, { event: 'assistant.thinking.started', data: { turnId: turn.id, generationId } });
         this.emitAvatarState(socket, state, 'thinking');
         this.emitAssistantExpression(socket, 'thinking', 'voice');
       },
       onAssistantSpeakingStarted: (payload) => {
         voiceDebug('tts_request_start', { sessionId, turnId: turn.id, generationId });
         void this.sessionService.transition(sessionId, 'assistant_speaking').catch(() => undefined);
-        this.sendEvent(socket, { event: 'assistant.speaking.started' });
+        this.sendEvent(socket, { event: 'assistant.speaking.started', data: { turnId: turn.id, generationId } });
         this.emitAvatarState(socket, state, 'speaking', payload.channel);
         this.emitAssistantExpression(socket, 'speaking', payload.channel);
         this.sendEvent(socket, {
@@ -464,7 +482,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       },
       onAssistantSpeakingEnded: () => {
         voiceDebug('tts_playback_summary', { sessionId, turnId: turn.id, generationId, audioChunkCount });
-        this.sendEvent(socket, { event: 'assistant.speaking.ended' });
+        this.sendEvent(socket, { event: 'assistant.speaking.ended', data: { turnId: turn.id, generationId } });
         void this.sessionService.transition(sessionId, 'listening').catch(() => undefined);
         this.emitAvatarState(socket, state, 'listening');
         this.emitAssistantExpression(socket, 'listening', 'voice');

@@ -15,7 +15,7 @@ export class NotificationsController {
 
   @Get()
   async list(@CurrentUser() user: AuthenticatedUser, @Query() query: ListNotificationsQueryDto) {
-    return this.notificationService.list(user.id, query.status);
+    return this.notificationService.list(user.id, query.status, query.type);
   }
 
   @Post(':id/read')

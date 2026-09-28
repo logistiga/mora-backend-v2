@@ -35,7 +35,13 @@ export class CalendarService {
     return this.provider.cancelEvent(userId, eventId);
   }
 
-  async listEvents(userId: string, scope: string, space: string, from: Date, to: Date): Promise<CalendarEventRecord[]> {
+  async listEvents(
+    userId: string,
+    scope: string,
+    space: string | undefined,
+    from: Date,
+    to: Date,
+  ): Promise<CalendarEventRecord[]> {
     return this.provider.listEvents(userId, scope, space, from, to);
   }
 

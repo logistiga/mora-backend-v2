@@ -69,12 +69,18 @@ export class MoraCalendarProvider implements CalendarProviderInterface {
     return toRecord(updated);
   }
 
-  async listEvents(userId: string, scope: string, space: string, from: Date, to: Date): Promise<CalendarEventRecord[]> {
+  async listEvents(
+    userId: string,
+    scope: string,
+    space: string | undefined,
+    from: Date,
+    to: Date,
+  ): Promise<CalendarEventRecord[]> {
     const events = await this.prisma.calendarEvent.findMany({
       where: {
         userId,
         scope,
-        space,
+        ...(space ? { space } : {}),
         status: { not: 'cancelled' },
         startsAt: { lte: to },
         endsAt: { gte: from },
@@ -99,7 +105,7 @@ export class MoraCalendarProvider implements CalendarProviderInterface {
   async findFreeSlots(
     userId: string,
     scope: string,
-    space: string,
+    space: string | undefined,
     from: Date,
     to: Date,
     durationMinutes: number,

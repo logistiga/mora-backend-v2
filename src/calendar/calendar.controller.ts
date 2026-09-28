@@ -20,7 +20,7 @@ export class CalendarController {
     return this.calendarService.listEvents(
       user.id,
       query.scope ?? 'personal',
-      query.space ?? 'personal',
+      query.space,
       new Date(query.from),
       new Date(query.to),
     );

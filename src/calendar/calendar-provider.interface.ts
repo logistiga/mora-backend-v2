@@ -47,7 +47,8 @@ export interface CalendarProviderInterface {
   createEvent(input: CalendarEventInput): Promise<CalendarEventRecord>;
   updateEvent(userId: string, eventId: string, patch: Partial<CalendarEventInput>): Promise<CalendarEventRecord>;
   cancelEvent(userId: string, eventId: string): Promise<CalendarEventRecord>;
-  listEvents(userId: string, scope: string, space: string, from: Date, to: Date): Promise<CalendarEventRecord[]>;
+  /** `space` omitted lists every space of the scope. */
+  listEvents(userId: string, scope: string, space: string | undefined, from: Date, to: Date): Promise<CalendarEventRecord[]>;
   getEvent(userId: string, eventId: string): Promise<CalendarEventRecord | null>;
   findFreeSlots(userId: string, scope: string, space: string, from: Date, to: Date, durationMinutes: number): Promise<FreeSlot[]>;
 }

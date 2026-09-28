@@ -28,9 +28,9 @@ export class NotificationService {
     });
   }
 
-  async list(userId: string, status?: 'unread' | 'read'): Promise<Notification[]> {
+  async list(userId: string, status?: 'unread' | 'read', type?: string): Promise<Notification[]> {
     return this.prisma.notification.findMany({
-      where: { userId, status },
+      where: { userId, status, type },
       orderBy: { createdAt: 'desc' },
       take: LIST_LIMIT,
     });

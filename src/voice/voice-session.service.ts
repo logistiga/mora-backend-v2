@@ -27,6 +27,7 @@ const MAX_SESSION_DURATION_MS = 2 * 60 * 60 * 1000; // 2h hard cap (AGENTS Phase
 @Injectable()
 export class VoiceSessionService {
   private readonly logger = new Logger(VoiceSessionService.name);
+  private readonly endListeners = new Set<(sessionId: string) => void>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -94,10 +95,31 @@ export class VoiceSessionService {
   async end(userId: string, id: string): Promise<VoiceSession> {
     const session = await this.getOwned(userId, id);
     if (session.status === 'ended') return session;
-    return this.prisma.voiceSession.update({
+    const ended = await this.prisma.voiceSession.update({
       where: { id },
       data: { status: 'ended', endedAt: new Date() },
     });
+    this.notifyEnded(id);
+    return ended;
+  }
+
+  /**
+   * Lets the WebSocket transport tear down a live socket when the session is
+   * ended through the REST API: the persisted row and the open socket are
+   * otherwise independent, leaving a socket attached to an `ended` session.
+   */
+  onSessionEnded(listener: (sessionId: string) => void): void {
+    this.endListeners.add(listener);
+  }
+
+  private notifyEnded(sessionId: string): void {
+    for (const listener of this.endListeners) {
+      try {
+        listener(sessionId);
+      } catch (error) {
+        this.logger.warn(`Voice session end listener failed: ${String(error)}`);
+      }
+    }
   }
 
   /** Enforces the hard max-duration cap; called on each inbound socket event. */

@@ -63,6 +63,22 @@ describe('MoraCalendarProvider', () => {
     expect(slots.length).toBeGreaterThan(0); // still finds slots around the busy window
   });
 
+  it('listEvents() without a space queries every space of the scope (regression, stabilization B)', async () => {
+    ctx.prismaMock.calendarEvent.findMany.mockResolvedValue([baseEvent]);
+
+    await ctx.provider.listEvents(
+      'u1',
+      'personal',
+      undefined,
+      new Date('2026-09-24T00:00:00Z'),
+      new Date('2026-09-25T00:00:00Z'),
+    );
+
+    const where = ctx.prismaMock.calendarEvent.findMany.mock.calls[0][0].where;
+    expect(where.space).toBeUndefined();
+    expect(where.scope).toBe('personal');
+  });
+
   it('getEvent() returns null (not another user\'s event) when userId does not match', async () => {
     ctx.prismaMock.calendarEvent.findUnique.mockResolvedValue({ ...baseEvent, userId: 'someone-else' });
     const result = await ctx.provider.getEvent('u1', 'e1');

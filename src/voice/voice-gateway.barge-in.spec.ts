@@ -128,6 +128,8 @@ describe('VoiceGateway — stale STT finalize guard (Phase F barge-in regression
       .map((payload) => JSON.parse(payload as string))
       .filter((payload) => payload.event === 'transcript.final');
 
-    expect(transcriptEvents).toEqual([{ event: 'transcript.final', data: { text: 'fresh transcript' } }]);
+    expect(transcriptEvents).toEqual([
+      { event: 'transcript.final', data: { text: 'fresh transcript', generationId: expect.any(String) } },
+    ]);
   });
 });
