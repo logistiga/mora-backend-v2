@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
@@ -14,6 +13,7 @@ import { BusinessConnectorsModule } from './business-connectors/business-connect
 import { CalendarModule } from './calendar/calendar.module.js';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { RequestContextInterceptor } from './common/http/request-context.interceptor.js';
+import { assignRequestId } from './common/http/request-id.util.js';
 import { RequestContextModule } from './common/http/request-context.module.js';
 import { ConfigModule } from './config/config.module.js';
 import type { AppConfig } from './config/configuration.js';
@@ -61,15 +61,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
                 ? { target: 'pino-pretty', options: { singleLine: true } }
                 : undefined,
             autoLogging: env !== 'test',
-            genReqId: (req, res) => {
-              const incoming = req.headers['x-request-id'];
-              const requestId =
-                typeof incoming === 'string' && incoming.trim()
-                  ? incoming.trim()
-                  : randomUUID();
-              res.setHeader('X-Request-Id', requestId);
-              return requestId;
-            },
+            genReqId: (req, res) => assignRequestId(req, res),
             customProps: (req) => ({
               requestId: req.id,
               userId: (req as { user?: { id?: string } }).user?.id,

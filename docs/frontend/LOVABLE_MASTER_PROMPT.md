@@ -65,10 +65,12 @@ alone to conclude that Vision, STT or TTS is unavailable** — ask `/vision/stat
 
 ## Core screens to build
 
-1. Authentication
-- Login
-- Register
+1. Authentication (private app — single owner)
+- Login only: the app opens on "Connexion". No "Créer un compte" link, no Register screen,
+  no onboarding that creates a user; never call `/auth/register` (it returns 403).
 - token refresh/logout handling
+- the owner is `role: "ADMIN"` (from `GET /users/me`) and uses every screen normally, plus
+  the SYSTEM provider screen
 
 2. Main chat
 - conversation list

@@ -9,8 +9,10 @@ BullMQ (healthcheck job only), JWT access/refresh auth, `/health`, structured lo
 exception handling/validation/rate limiting, Swagger (dev), Docker Compose, tests.
 
 ## Phase B — Router + PersonalAgent + ProfessionalAgent
-`MoraRouter` dispatches a request to `PersonalAgent`, `ProfessionalAgent`, or a `Hybrid` mode only
-when explicitly authorized by the user. No LLM calls yet — this phase is about the routing
+`MoraRouter` dispatches a request to `PersonalAgent` or `ProfessionalAgent`. A request mixing
+both scopes is classified `hybrid` and **blocked**: `MORA_CROSS_SCOPE_ENABLED=false` (default)
+returns a fixed "reformulate separately" reply, and even with it set to `true` no combined
+hybrid handling is implemented yet (a "not implemented" reply is returned). No LLM calls yet — this phase is about the routing
 contract and agent boundary, not intelligence.
 
 ## Phase C — Mémoire + pgvector + embeddings

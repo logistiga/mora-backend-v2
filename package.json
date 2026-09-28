@@ -25,6 +25,8 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
+    "owner:upsert": "tsx --env-file-if-exists=.env src/cli/upsert-owner.ts",
+    "owner:upsert:prod": "node dist/cli/upsert-owner.js",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"

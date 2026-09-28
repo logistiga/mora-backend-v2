@@ -372,11 +372,14 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     const transcript = await sttSession.finalize();
     const sttLatencyMs = Date.now() - sttStarted;
     voiceDebug('stt_final', { sessionId, transcriptLength: transcript.length, sttLatencyMs });
-    // Requested explicitly for this debug pass: the actual transcript TEXT
-    // (not just its length) — this is conversation content, not a secret,
-    // and is exactly what's needed to diagnose language/hallucination
-    // issues. Still never any raw audio.
-    voiceDebug('transcript.final', { sessionId, languageHint: state.language, text: transcript, sttLatencyMs });
+    // Metadata only: the transcript is user speech content and must not
+    // end up in (staging) logs. voiceDebug() also strips any `text` field.
+    voiceDebug('transcript.final', {
+      sessionId,
+      languageHint: state.language,
+      transcriptLength: transcript.length,
+      sttLatencyMs,
+    });
 
     if (!isCurrentInputGeneration()) {
       voiceDebug('stale_stt_finalize_dropped', {

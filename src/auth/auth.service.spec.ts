@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrismaService } from '../database/prisma.service.js';
@@ -28,17 +28,23 @@ describe('AuthService', () => {
   const jwtServiceMock = {
     signAsync: vi.fn(async () => 'signed.jwt.token'),
   };
+  let allowPublicRegistration = true;
   const configServiceMock = {
-    get: vi.fn(() => ({
-      accessSecret: 'a'.repeat(32),
-      accessExpiresIn: '15m',
-      refreshSecret: 'b'.repeat(32),
-      refreshExpiresIn: '7d',
-    })),
+    get: vi.fn((key: string) =>
+      key === 'app.allowPublicRegistration'
+        ? allowPublicRegistration
+        : {
+            accessSecret: 'a'.repeat(32),
+            accessExpiresIn: '15m',
+            refreshSecret: 'b'.repeat(32),
+            refreshExpiresIn: '7d',
+          },
+    ),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    allowPublicRegistration = true;
     (bcrypt.hash as unknown as ReturnType<typeof vi.fn>).mockResolvedValue('hashed');
     (bcrypt.compare as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     jwtServiceMock.signAsync.mockResolvedValue('signed.jwt.token');
@@ -69,6 +75,32 @@ describe('AuthService', () => {
       expect(usersServiceMock.create).toHaveBeenCalled();
       expect(result).toEqual({ accessToken: 'signed.jwt.token', refreshToken: 'signed.jwt.token' });
       expect(prismaMock.refreshToken.create).toHaveBeenCalledOnce();
+    });
+
+    it('never passes a role to user creation (no self-granted ADMIN)', async () => {
+      usersServiceMock.create.mockResolvedValue({ id: 'u1', email: 'a@b.com', role: 'USER' });
+      await service.register({
+        email: 'a@b.com',
+        password: 'password123',
+        displayName: 'A',
+        role: 'ADMIN',
+      } as never);
+      expect(usersServiceMock.create).toHaveBeenCalledWith({
+        email: 'a@b.com',
+        passwordHash: 'hashed',
+        displayName: 'A',
+      });
+    });
+
+    it('refuses registration with a neutral 403 when public registration is disabled', async () => {
+      allowPublicRegistration = false;
+      const attempt = service.register({ email: 'a@b.com', password: 'password123', displayName: 'A' });
+      await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(attempt).rejects.toThrow('Registration is disabled.');
+      expect(bcrypt.hash).not.toHaveBeenCalled();
+      expect(usersServiceMock.findByEmail).not.toHaveBeenCalled();
+      expect(usersServiceMock.create).not.toHaveBeenCalled();
+      expect(prismaMock.refreshToken.create).not.toHaveBeenCalled();
     });
   });
 

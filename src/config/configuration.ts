@@ -46,6 +46,11 @@ export interface AppConfig {
     summaryMessageThreshold: number;
   };
   crossScopeEnabled: boolean;
+  /**
+   * Private (single-owner) app: `POST /auth/register` is refused unless this
+   * is explicitly `true`. Off by default; only the test env turns it on.
+   */
+  allowPublicRegistration: boolean;
   encryptionKey?: string;
   /**
    * Phase D: the IANA timezone used to phrase the "current time" reference
@@ -128,6 +133,9 @@ export default (): { app: AppConfig } => ({
     // Phase B security default: hybrid requests never combine personal +
     // professional context/actions unless this is explicitly turned on.
     crossScopeEnabled: process.env.MORA_CROSS_SCOPE_ENABLED === 'true',
+    // Mora v2 is a private app: no public sign-up unless explicitly enabled
+    // (test env only). Anything other than the exact string 'true' is off.
+    allowPublicRegistration: process.env.MORA_ALLOW_PUBLIC_REGISTRATION === 'true',
     // Phase C.5: master key for AiProvider secret encryption (AES-256-GCM).
     // Optional at boot (the app must still start with none configured — see
     // AGENTS §1) but required the moment any code tries to encrypt/decrypt a

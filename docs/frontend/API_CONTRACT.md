@@ -22,6 +22,9 @@ per failed field).
 **Request correlation**:
 - Every HTTP response now includes `X-Request-Id`.
 - Error bodies also include the same `requestId`.
+- A client-sent `X-Request-Id` is kept **only** if it is at most 128 characters of
+  `[A-Za-z0-9._:-]`. Anything else (too long, HTML, spaces, control characters, repeated header)
+  is discarded — never echoed back nor logged — and replaced by a server-generated UUID.
 - The frontend should preserve/show this ID in bug reporting and debug UI instead of inventing
   its own correlation token.
 
@@ -38,7 +41,15 @@ A throttled request returns `429`.
 
 ## Auth (Phase A)
 
-### `POST /api/v1/auth/register`
+**Private app.** Mora v2 is a private, single-owner application: there is no public sign-up.
+The owner account (role `ADMIN`) is provisioned server-side (`npm run owner:upsert`), never
+through the API. The frontend has a **Login** screen only.
+
+### `POST /api/v1/auth/register` — disabled outside tests
+- **Availability**: only when `MORA_ALLOW_PUBLIC_REGISTRATION=true` (test environment only).
+  Staging and production force it to `false`, and then **every** call returns
+  `403 { "message": "Registration is disabled." }` — same answer whatever the email, nothing
+  is created. The frontend must never call it nor show a "Créer un compte" entry.
 - **Auth**: none
 - **Body**:
   ```json
@@ -48,13 +59,15 @@ A throttled request returns `429`.
   ```json
   { "accessToken": "eyJhbGciOi...", "refreshToken": "eyJhbGciOi..." }
   ```
-- **Errors**: `400` (validation — bad email, password < 8 chars, missing displayName),
-  `409` (`"A user with this email already exists"`).
+- **Errors**: `403` (`"Registration is disabled."` — private mode, the default), `400`
+  (validation — bad email, password < 8 chars, missing displayName, or any extra field such as
+  `role`), `409` (`"A user with this email already exists"`, registration enabled only).
+  An account created here is always `role: "USER"`; `ADMIN` is never granted over HTTP.
 
 ### `POST /api/v1/auth/login`
 - **Auth**: none
 - **Body**: `{ "email": "user@example.com", "password": "..." }`
-- **Success — 200**: same shape as register.
+- **Success — 200**: `{ "accessToken": "...", "refreshToken": "..." }`.
 - **Errors**: `400` (validation), `401` (`"Invalid credentials"` — wrong password, unknown
   email, or inactive account), `429` (rate limited after 5 attempts/60s).
 
@@ -133,6 +146,10 @@ A throttled request returns `429`.
   }
   ```
   `route`/`scope`: `"direct" | "personal" | "professional" | "hybrid"`.
+  `direct` has no memory and no tools: a message about the user's own data ("mes rappels",
+  "mes documents", "Qu'est-ce que tu sais sur moi ?", "Tu te souviens de ce que je t'ai dit ?")
+  is always routed `personal` by the deterministic rules, with or without an LLM configured.
+  `hybrid` is always blocked while `MORA_CROSS_SCOPE_ENABLED=false` (default).
   `space`: `"direct" | "personal" | "general" | "logistiga" | "piston" | "code" | "hybrid"`.
   `messageId` identifies Mora's reply (the assistant message just created), not the user's
   message.
@@ -692,8 +709,11 @@ control. See `docs/frontend/FRONTEND_HANDOFF.md` for the full conversational UX 
 support (confirmation cards, etc).
 
 **Security levels** (`securityLevel` on a tool/pending action):
-- `N1` (auto) — read-only or low-risk (e.g. `list_tasks`, `search_memories`): executes
-  immediately, no confirmation, result already reflected in `/messages`' `response` text.
+- `N1` (auto) — read-only or low-risk (e.g. `list_tasks`, `search_memories`, `create_memory`):
+  executes immediately, no confirmation, result already reflected in `/messages`' `response` text.
+  `create_memory` stores a memory the user explicitly asked Mora to keep ("retiens que…",
+  "souviens-toi que…", "mémorise…") in the conversation's scope/space; it only writes the
+  user's own memory and is reversible through the memory API.
 - `N2` (confirmation) — modifies state but reversible (e.g. `create_task`, `create_reminder`,
   `complete_task`, `cancel_reminder`): **always** requires `POST /pending-actions/:id/approve`.
 - `N3` (sensitive) — reserved for future external actions (Phase E). No N3 tool ships in
@@ -816,6 +836,8 @@ the LLM** from `POST /messages` goes through the `pending_action` confirmation f
 
 - `GET /api/v1/whatsapp/accounts`, `POST /api/v1/whatsapp/accounts` — `{ label, phoneNumber, provider: "evolution"|"meta_cloud", config?, apiKey? }`. Credentials AES-256-GCM encrypted, never returned.
 - `GET /api/v1/whatsapp/accounts/:id/health` — `{ connected: boolean, error? }`.
+- `DELETE /api/v1/whatsapp/accounts/:id` — hard delete of the caller's own account (and its
+  encrypted credentials); `404` if unknown, `403` if it belongs to another user. Returns `{ id, deleted: true }`.
 - `GET /api/v1/whatsapp/conversations?accountId=`, `GET /api/v1/whatsapp/conversations/:id/messages`.
 - `POST /api/v1/webhooks/whatsapp/:accountId` — Evolution API webhook target (not a
   frontend-facing endpoint), secured by a shared-secret header (`X-Webhook-Secret`,
@@ -830,6 +852,8 @@ the LLM** from `POST /messages` goes through the `pending_action` confirmation f
 
 - `GET /api/v1/email/accounts`, `POST /api/v1/email/accounts` — `{ label, address, provider: "imap_smtp"|"gmail"|"microsoft_graph", imapHost?, imapPort?, smtpHost?, smtpPort?, username?, password? }`. Credentials encrypted, never returned.
 - `GET /api/v1/email/accounts/:id/health`, `POST /api/v1/email/accounts/:id/sync` (pulls recent unseen messages via IMAP).
+- `DELETE /api/v1/email/accounts/:id` — hard delete of the caller's own account (and its
+  encrypted credentials); `404` if unknown, `403` if it belongs to another user. Returns `{ id, deleted: true }`.
 - `GET /api/v1/email/threads?accountId=`, `GET /api/v1/email/threads/:id/messages`.
 - Inbound HTML is sanitized at ingest (`htmlBodySanitized`) — the raw provider HTML is never
   stored or rendered.

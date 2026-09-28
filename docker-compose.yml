@@ -50,6 +50,9 @@ services:
       # and Swagger stays off. docker-compose.override.yml re-overrides this
       # to "development" for local dev.
       NODE_ENV: production
+      # Private single-owner app: public sign-up is always off in this
+      # production-shaped stack, whatever .env says.
+      MORA_ALLOW_PUBLIC_REGISTRATION: 'false'
       POSTGRES_HOST: mora-postgres
       REDIS_HOST: mora-redis
       # DATABASE_URL is a standalone literal (Prisma reads it directly, not

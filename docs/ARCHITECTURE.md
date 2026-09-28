@@ -14,7 +14,7 @@ AppModule
 ├─ DatabaseModule       (global) — PrismaService
 ├─ QueueModule          — BullMQ connection + healthcheck queue/worker
 ├─ HealthModule          — GET /health (Postgres + Redis)
-├─ AuthModule            — register/login/refresh/logout
+├─ AuthModule            — login/refresh/logout (register: 403 unless MORA_ALLOW_PUBLIC_REGISTRATION=true, tests only)
 └─ UsersModule           — GET /users/me
 ```
 

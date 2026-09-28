@@ -53,6 +53,9 @@ services:
     environment:
       NODE_ENV: production
       MORA_APP_ENV: staging
+      # Private single-owner app: forced here so .env.staging can never turn
+      # public sign-up on. The owner is created with `npm run owner:upsert:prod`.
+      MORA_ALLOW_PUBLIC_REGISTRATION: 'false'
       MORA_GIT_COMMIT: ${MORA_GIT_COMMIT:-}
       MORA_BUILD_VERSION: ${MORA_BUILD_VERSION:-}
       # Fully-qualified container names, never the bare service names: the API

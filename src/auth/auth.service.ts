@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -30,7 +30,17 @@ export class AuthService {
     this.jwtConfig = this.configService.get<AppConfig['jwt']>('app.jwt')!;
   }
 
+  /**
+   * Private app: public sign-up is refused unless
+   * MORA_ALLOW_PUBLIC_REGISTRATION=true (test env only). Checked before any
+   * lookup so the response never reveals whether an email exists. Accounts
+   * created here are always role USER (the schema default) — ADMIN is never
+   * granted over HTTP; see `npm run owner:upsert`.
+   */
   async register(dto: RegisterDto): Promise<TokenPair> {
+    if (!this.configService.get<boolean>('app.allowPublicRegistration')) {
+      throw new ForbiddenException('Registration is disabled.');
+    }
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
     const user = await this.usersService.create({
       email: dto.email,

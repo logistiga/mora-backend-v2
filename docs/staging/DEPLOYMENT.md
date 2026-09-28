@@ -70,7 +70,7 @@ or storage volumes.
 Minimum checks:
 
 1. `GET /api/v1/health`
-2. auth register/login/refresh/logout
+2. `POST /auth/register` → `403 "Registration is disabled."`; owner login/refresh/logout OK
 3. `POST /messages`
 4. `GET /ai-providers/status`
 5. `GET /vision/status`
@@ -101,7 +101,16 @@ cp .env.staging.example .env.staging     # fill in real secrets, chmod 600
 docker compose -p mora-v2-staging -f docker-compose.staging.yml --env-file .env.staging up -d --build
 docker compose -p mora-v2-staging -f docker-compose.staging.yml --env-file .env.staging \
   --profile migrate run --rm migrate      # prisma migrate deploy
+# create (or promote) the private owner account as ADMIN — never via the API
+docker compose -p mora-v2-staging -f docker-compose.staging.yml --env-file .env.staging \
+  exec -e MORA_OWNER_EMAIL=<owner email> -e MORA_OWNER_PASSWORD=<12+ chars> \
+  api npm run owner:upsert:prod
 ```
+
+- private single-owner app: `MORA_ALLOW_PUBLIC_REGISTRATION` is forced to `false` in the
+  compose file, so `POST /auth/register` always answers 403. `owner:upsert` creates the owner
+  as ADMIN, or promotes/re-activates an existing account without changing its password; the
+  owner logs in again afterwards to get the ADMIN role in the token
 
 - containers: `mora-v2-staging-api` / `-postgres` (pgvector pg16) / `-redis`
 - network: `mora-v2-staging-internal` (+ `coolify` for the API only)

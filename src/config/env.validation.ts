@@ -49,6 +49,10 @@ export class EnvironmentVariables {
   MORA_SWAGGER_ENABLED?: string;
 
   @IsOptional()
+  @IsIn(['true', 'false'])
+  MORA_ALLOW_PUBLIC_REGISTRATION?: string;
+
+  @IsOptional()
   @IsString()
   MORA_BUILD_VERSION?: string;
 

@@ -36,8 +36,16 @@ const FACTUAL_DIRECT_PATTERN = /\b(quelle heure|quel jour|quelle date)\b/i;
 
 // A message referring to the user's own stored data can never be answered on
 // the tool-less "direct" path — it needs an agent with the retrieval tools.
+// Checked in classifyWithRules() BEFORE the greeting / short-message /
+// default-fallback rules, so no path (with or without an LLM) can put it on
+// "direct".
 const USER_DATA_PATTERN =
   /\b(mes?|ma|mon)\s+(documents?|fichiers?|notes?|t[âa]ches?|rappels?|agenda|calendrier|rendez-vous|contacts?|mails?|emails?|e-mails?|messages?|conversations?|factures?|souvenirs?|m[ée]moires?)\b/i;
+// Questions about what Mora knows/remembers about the user ("Qu'est-ce que tu
+// sais sur moi ?", "Que sais-tu de moi ?", "Tu te souviens de ce que je t'ai
+// dit ?") — only answerable from the user's stored memories.
+const SELF_KNOWLEDGE_PATTERN =
+  /(?:\btu\s+(?:sais|connais|as\s+retenu|as\s+m[ée]moris[ée]|te\s+souviens)|\b(?:sais|connais)[- ]tu|\bte\s+souviens[- ]tu)(?:\s+[^\s?.!]+){0,4}?\s+(?:(?:sur|de)\s+moi\b|me\s+concernant\b|[àa]\s+mon\s+sujet\b)|\bce\s+que\s+je\s+t['’]ai\s+(?:dit|confi[ée]|appris|racont[ée])\b/i;
 
 const SENSITIVE_PATTERN =
   /\b(mot de passe|password|iban|carte bancaire|cvv|num[ée]ro de carte|secret|cl[ée] api|api key|credentials?|num[ée]ro de s[ée]curit[ée] sociale)\b/i;
@@ -70,17 +78,6 @@ export class MoraRouterService {
     // that never guesses into personal/professional territory.
     const llmResult = await this.classifyWithLlm(text, userId);
     if (llmResult) {
-      if (llmResult.route === 'direct' && USER_DATA_PATTERN.test(text)) {
-        return this.buildResult({
-          route: 'personal',
-          scope: 'personal',
-          space: 'personal',
-          intent: llmResult.intent,
-          text,
-          confidence: 0.7,
-          method: 'rules',
-        });
-      }
       return llmResult;
     }
 
@@ -140,6 +137,18 @@ export class MoraRouterService {
         intent: this.detectIntent(text),
         text,
         confidence: 0.85,
+        method: 'rules',
+      });
+    }
+
+    if (USER_DATA_PATTERN.test(text) || SELF_KNOWLEDGE_PATTERN.test(text)) {
+      return this.buildResult({
+        route: 'personal',
+        scope: 'personal',
+        space: 'personal',
+        intent: this.detectIntent(text),
+        text,
+        confidence: 0.7,
         method: 'rules',
       });
     }

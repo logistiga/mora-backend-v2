@@ -36,6 +36,9 @@ without exposing secrets.
 ### HTTP
 
 - Search structured logs by `requestId`.
+- A client `X-Request-Id` is only reused when it is ≤128 chars of `[A-Za-z0-9._:-]`;
+  otherwise the server generates a UUID, and the raw client value appears neither in the
+  response nor in the logs.
 - Confirm:
   - route
   - status code
@@ -60,6 +63,10 @@ without exposing secrets.
 
 - Use `voiceSessionId` first.
 - Gateway debug events also emit a server-side `connectionId` for handshake/reconnect tracing.
+- `VOICE_DEBUG` events (debug level) carry metadata only: transcript/text fields are replaced
+  by their length (`transcriptLength`, `textLength`) and other strings are truncated to 120
+  chars — the user's speech is never logged. The in-process debug timeline
+  (`globalThis.__voiceDebug`) is a ring buffer of the last 500 events (≤100 counters).
 - Correlate:
   - `voiceSessionId`
   - `connectionId`
@@ -83,6 +90,7 @@ without exposing secrets.
 - API key
 - provider secret
 - raw audio
+- voice transcripts (user speech content)
 - raw private image
 - full private document payload
 

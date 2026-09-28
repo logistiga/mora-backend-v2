@@ -170,4 +170,45 @@ describe('MoraRouterService', () => {
     await service.classify('Bonjour');
     expect(llmServiceMock.complete).not.toHaveBeenCalled();
   });
+  describe('user-data questions never land on the tool-less direct route', () => {
+    it.each([
+      "Qu'est-ce que tu sais sur moi ?",
+      'Que sais-tu de moi ?',
+      'Tu te souviens de moi ?',
+      'Te souviens-tu de ce que je t’ai dit hier ?',
+      'Tu sais quoi à mon sujet ?',
+      "Qu'est-ce que tu as retenu sur moi ?",
+      'Mes rappels ?',
+      'Liste mes tâches',
+      'Bonjour, montre mes notes',
+      'Peux-tu retrouver ce que disent mes documents importants stp',
+    ])('routes "%s" to personal by rules, without any LLM (regression, smoke fbd9317)', async (text) => {
+      const result = await service.classify(text);
+      expect(result.route).toBe('personal');
+      expect(result.scope).toBe('personal');
+      expect(result.method).toBe('rules');
+      expect(llmServiceMock.complete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a user-data question off direct even when an LLM would have said direct', async () => {
+      llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({ route: 'direct', space: 'direct', intent: 'question', confidence: 0.9 }),
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+      });
+      const result = await service.classify("Qu'est-ce que tu sais sur moi ?");
+      expect(result.route).toBe('personal');
+    });
+
+    it.each([
+      'Que sais-tu sur la France ?',
+      'Tu connais la capitale du Maroc ?',
+      'Bonjour Mora',
+      'ça va ?',
+    ])('leaves a general question "%s" alone', async (text) => {
+      const result = await service.classify(text);
+      expect(result.route).toBe('direct');
+    });
+  });
 });

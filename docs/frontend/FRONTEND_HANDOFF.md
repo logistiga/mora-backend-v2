@@ -23,12 +23,20 @@ though those capabilities work through the SYSTEM chat provider's fallback. Use
 
 ## 1. Authentication (Phase A)
 
-**Backend provides:** email+password registration/login, JWT access token (15 min default) +
-refresh token (7 days default) with rotation, `GET /users/me`, logout (revokes the refresh
+**Private app:** Mora v2 is a private application for its owner. There is **no public
+sign-up**: `POST /auth/register` returns `403 "Registration is disabled."` on staging and
+production. The owner's account already exists (role `ADMIN`, created server-side) and uses
+the whole app normally — chat, personal/professional, memory, tasks, reminders, calendar,
+contacts, documents, vision, voice, avatar, email, WhatsApp, connections, providers
+(including SYSTEM providers), settings, bug reports.
+
+**Backend provides:** email+password login, JWT access token (15 min default) + refresh token
+(7 days default) with rotation, `GET /users/me` (includes `role`), logout (revokes the refresh
 token). No social login. No password reset flow yet.
 
 **Frontend must:**
-- Have a Login screen and a Register screen (email, password, display name).
+- Open directly on a **Login** screen (email, password). **No "Créer un compte" link, no
+  Register screen, no onboarding step that creates a user** — never call `/auth/register`.
 - Store `accessToken` and `refreshToken` (e.g. in memory + a secure storage), attach
   `Authorization: Bearer <accessToken>` to every API call except `/auth/*` and `/health`.
 - On a 401, attempt `POST /auth/refresh` once with the stored refresh token; on failure,
@@ -39,8 +47,7 @@ token). No social login. No password reset flow yet.
   when creating a backend bug report.
 
 **Loading / empty / error states:** standard form loading spinner on submit; show the
-`message` field from error responses (e.g. "Invalid credentials", "A user with this email
-already exists") directly — they're already user-presentable French/English short strings.
+`message` field from error responses (e.g. "Invalid credentials") directly — they're already user-presentable French/English short strings.
 Also keep `requestId` available in a collapsible debug section or a copy button.
 
 **Not available yet:** password reset, email verification, 2FA, social login, "remember me"
@@ -54,7 +61,9 @@ beyond the refresh token's own 7-day lifetime.
 `MoraRouterService` into a `route` (`direct | personal | professional | hybrid`), a `scope`,
 a `space`, an `intent`, a `complexity`, a `securityLevel`, and a `confidence` (0–1). This
 classification is deterministic (keyword rules) with an optional LLM fallback for ambiguous
-messages — the frontend never calls the router directly, it only receives the result on each
+messages. Questions about the user's own data ("mes rappels", "Qu'est-ce que tu sais sur
+moi ?") are always routed `personal` by the rules — `direct` has no memory and no tools, so
+it is never used for them. The frontend never calls the router directly, it only receives the result on each
 `POST /messages` response and can look up history via `GET /router-decisions`.
 
 **Frontend should:** show the resolved `route`/`space` as a small badge next to Mora's reply
@@ -588,7 +597,7 @@ for `Document`, `DocumentDetail`, `DocumentTable`, `DocumentChunkCitation`, `Con
 
 ## 15. Screens the frontend can already build with Phase A+B+C+C.5+D+E
 
-- **Login** / **Register** screens (Phase A auth).
+- **Login** screen only (Phase A auth — private app, no Register screen).
 - **Main Chat screen**: send a message, see Mora's reply, with a route/space badge.
 - **Conversation list** screen.
 - **Personal vs Professional visual distinction** in the chat (badge/color).
