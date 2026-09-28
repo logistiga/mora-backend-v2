@@ -190,6 +190,35 @@ alone to conclude that Vision, STT or TTS is unavailable** — ask `/vision/stat
 - Audio output is MP3 chunks.
 - `transcript.partial` exists for forward compatibility but is not emitted by the current backend.
 
+### Connection contract (exact sequence)
+
+1. `POST /voice/sessions` → keep the returned `id`.
+2. Open `wss://.../voice/ws?token=<accessToken>` (the token is the only query parameter;
+   passing `sessionId` in the URL does nothing).
+3. Send `{"event":"session.start","data":{"sessionId":"<id>"}}` — the socket is only bound to
+   the session at this point.
+4. The backend answers `session.ready` (with `protocolVersion` and `audioFormat`) then
+   `avatar.state`. Only then stream binary PCM16 frames and send `{"event":"audio.end"}`.
+5. `POST /voice/sessions/:id/end` closes the socket server-side: the client receives
+   `session.ended` then close code `1000`. Never assume REST end and socket close are
+   independent.
+6. Every assistant event carries `turnId` and `generationId`; ignore any event whose
+   `generationId` is not the current one (late/stale generation after a barge-in).
+
+### State semantics the UI must implement
+
+- `confirming` is emitted once with the `action.pending_confirmation` event; the backend
+  switches to `speaking` as soon as it reads the question aloud. Keep the confirmation UI
+  visible until `action.executed`, `action.clarification_needed` or an explicit rejection —
+  do not bind it to the `confirming` avatar state alone.
+- The backend switches back to `listening` when it has finished *sending* the audio, not when
+  the browser has finished *playing* it. Gate the microphone on your own playback-ended event
+  to avoid echo, and keep the avatar in `speaking` until playback really ends.
+- `interrupted` is a transient marker, not a durable state; hold it in the UI for a short
+  minimum duration (~800 ms) before returning to `listening`.
+- Lip-sync cues are estimated from text, not aligned on the audio waveform; treat them as
+  approximate and drive mouth movement from the audio envelope if you need tighter sync.
+
 ### Reconnect and realtime resilience
 
 - One socket per voice session; a second socket for the same session is rejected
