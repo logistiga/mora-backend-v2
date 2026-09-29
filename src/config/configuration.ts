@@ -44,6 +44,13 @@ export interface AppConfig {
     retrievalLimit: number;
     contextBudgetChars: number;
     summaryMessageThreshold: number;
+    /**
+     * Bound on how many "essential" (cross-scope, durable) ProfileFact rows
+     * are ever loaded into a single request's context — see
+     * EssentialProfile in ProfileFactsService. Small and fixed on purpose:
+     * this must never become "load the user's entire memory every turn".
+     */
+    essentialProfileLimit: number;
   };
   crossScopeEnabled: boolean;
   /**
@@ -129,6 +136,7 @@ export default (): { app: AppConfig } => ({
         process.env.MORA_SUMMARY_MESSAGE_THRESHOLD ?? '20',
         10,
       ),
+      essentialProfileLimit: parseInt(process.env.MORA_ESSENTIAL_PROFILE_LIMIT ?? '12', 10),
     },
     // Phase B security default: hybrid requests never combine personal +
     // professional context/actions unless this is explicitly turned on.

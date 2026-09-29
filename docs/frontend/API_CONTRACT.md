@@ -475,6 +475,12 @@ unset → `active`) list but still fetchable directly by id.
   ```
 - **Errors**: `401`.
 - **No POST/PATCH endpoint yet** — profile facts are read-only via the API in Phase C.
+- **Learning core (new)**: `scope=essential&space=essential` now also returns the "Essential User
+  Profile" — small, cross-scope, durable preferences (e.g. `language_behavior`, `form_of_address`,
+  `greeting_style`) that Mora applies to every response automatically, including plain small-talk
+  replies. Same object shape as above; no new endpoint or frontend work in this phase — noted here
+  only so a future "manage what Mora remembers about you" screen knows where to read these from.
+  See `docs/LEARNING_CORE.md` in the backend repo for the full design.
 
 ### `GET /api/v1/entities`
 - **Query params** (optional): `scope`, `space`, `type`

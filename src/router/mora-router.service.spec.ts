@@ -28,13 +28,24 @@ describe('MoraRouterService', () => {
     // Found via real end-to-end validation: this exact phrasing was
     // previously misrouted to "direct" (canned reply) purely because it
     // starts with "Bonjour", even though it carries a real personal
-    // preference — no LLM configured here, so it should land on the safe
-    // low-confidence default fallback, never the confident "greeting" path.
+    // preference.
+    //
+    // Learning-core phase update: this exact phrasing ("je préfère que...")
+    // is now caught deterministically by LEARNING_INSTRUCTION_PATTERN and
+    // routed 'personal' with high confidence, WITHOUT needing an LLM —
+    // superseding the old "land on the safe low-confidence default, hope
+    // the LLM fallback saves it" behaviour with a real fix: a durable
+    // preference instruction should never depend on an LLM being configured
+    // to be routed somewhere it can actually be learned. See
+    // MoraRouterService and the dedicated LLM-fallback test below for the
+    // (still-covered) case of a preference phrased in a way no rule catches.
     const result = await service.classify(
       'Bonjour Mora. Je préfère que tu me répondes de façon concise, naturelle et directe.',
     );
-    expect(result.method).not.toBe('rules');
-    expect(result.confidence).toBeLessThan(0.5);
+    expect(result.route).toBe('personal');
+    expect(result.method).toBe('rules');
+    expect(result.intent).toBe('learn_preference');
+    expect(result.confidence).toBeGreaterThan(0.5);
   });
 
   it('lets a short greeting-only message still route as direct/greeting', async () => {
@@ -77,8 +88,14 @@ describe('MoraRouterService', () => {
       model: 'gpt-4o-mini',
     });
 
+    // Deliberately NOT the "je préfère que..." phrasing used elsewhere in
+    // this file: that one is now caught deterministically by
+    // LEARNING_INSTRUCTION_PATTERN (see the regression test above) and would
+    // never reach this fallback. This message is substantive, opens with a
+    // greeting, and matches no rule at all — genuinely exercising the LLM
+    // fallback path.
     const result = await service.classify(
-      'Bonjour Mora. Je préfère que tu me répondes de façon concise, naturelle et directe.',
+      "Bonjour Mora. Peux-tu m'expliquer en détail comment fonctionne la photosynthèse ?",
     );
 
     expect(result.method).toBe('llm-fallback');

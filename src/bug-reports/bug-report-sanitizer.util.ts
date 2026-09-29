@@ -1,16 +1,13 @@
+import { SECRET_VALUE_PATTERN } from '../common/security/secret-patterns.js';
+
 const FORBIDDEN_KEY = /(authorization|cookie|token|jwt|password|secret|api[_-]?key|refresh[_-]?token)/i;
 // Global (`g`): every occurrence in a string is masked, not just the first.
 // Credential-looking values are masked together with their label
 // (`password=hunter2` → `[REDACTED]`), so the value never survives next to a
 // masked label. Plain prose mentioning these words is left untouched.
-const FORBIDDEN_VALUE = new RegExp(
-  [
-    String.raw`\bbearer\s+[a-z0-9._~+/=-]{8,}`,
-    String.raw`\bsk-[a-z0-9_-]{8,}`,
-    String.raw`["']?\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;&]+)`,
-  ].join('|'),
-  'gi',
-);
+// Shared with the memory/essential-profile extraction guard — see
+// src/common/security/secret-patterns.ts.
+const FORBIDDEN_VALUE = SECRET_VALUE_PATTERN;
 
 const MAX_DEPTH = 4;
 const MAX_ARRAY = 20;

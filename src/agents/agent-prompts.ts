@@ -15,9 +15,11 @@
  */
 export const TOOL_CHOICE_RULES =
   'Choix de l\'outil (important) : ' +
-  '- "retiens que", "souviens-toi que", "mémorise", "note que", "n\'oublie pas que" décrivent ' +
-  'une information à retenir sur l\'utilisateur ou son contexte → appelle create_memory, jamais ' +
-  'create_task. ' +
+  '- "retiens que", "souviens-toi que", "rappelle-toi (que/de)", "mémorise", "note que", ' +
+  '"n\'oublie pas que", "à partir de maintenant", "désormais", "je préfère que" décrivent ' +
+  'une information ou préférence durable à retenir sur l\'utilisateur ou son contexte → appelle ' +
+  'create_memory, jamais create_task. Distinct de "rappelle-moi" (voir ci-dessous), qui concerne ' +
+  'une alerte, pas une mémorisation. ' +
   '- "rappelle-moi de/d\'/que", "préviens-moi", "alerte-moi" avec ou sans date décrivent une alerte ' +
   'à une date/heure → appelle create_reminder, jamais create_task. ' +
   '- en revanche "rappelle-moi" suivi directement d\'un nom ou d\'une question ' +

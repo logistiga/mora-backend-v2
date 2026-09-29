@@ -19,6 +19,7 @@ function buildService(budgetChars = 6000) {
   };
   const profileFactsServiceMock = {
     getRelevant: vi.fn(async (): Promise<Array<{ key: string; value: string }>> => []),
+    getEssential: vi.fn(async (): Promise<Array<{ key: string; value: string }>> => []),
   };
   const documentRetrievalServiceMock = {
     retrieve: vi.fn(
@@ -90,6 +91,17 @@ describe('ContextBuilderService', () => {
     const result = await ctx.service.build(baseParams);
 
     expect(result.messages.some((m) => m.content.includes('concise'))).toBe(true);
+  });
+
+  it('includes the Essential User Profile as its own system note (learning-core), fetched independently of scope-specific facts', async () => {
+    ctx.profileFactsServiceMock.getEssential.mockResolvedValue([
+      { key: 'language_behavior', value: "Répond dans la langue utilisée par l'utilisateur" },
+    ]);
+
+    const result = await ctx.service.build(baseParams);
+
+    expect(ctx.profileFactsServiceMock.getEssential).toHaveBeenCalledWith('u1');
+    expect(result.messages.some((m) => m.content.includes('language_behavior'))).toBe(true);
   });
 
   it('includes the conversation summary as a system note when present', async () => {

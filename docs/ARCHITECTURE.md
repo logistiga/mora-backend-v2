@@ -102,6 +102,14 @@ RefreshToken
 - `docker-compose.override.yml`: local-dev only (auto-loaded by `docker compose up`) — publishes
   DB/Redis ports to the host and runs the API in watch mode with a bind-mounted `src/`.
 
+## Learning core — Essential User Profile
+
+Durable, cross-scope user preferences (language behaviour, form of address, greeting/response
+style) learned from Chat/Voice and applied automatically to every future turn, including the
+tool-less "direct" route. Reuses the existing (previously unused) `ProfileFact` table with a
+reserved `scope: "essential"` sentinel — no migration. See **[docs/LEARNING_CORE.md](LEARNING_CORE.md)**
+for the full design, the root-cause bug it fixes, and its guarantees/limits.
+
 ## Environment & secrets
 
 Every variable the app reads is declared and validated in `src/config/env.validation.ts`

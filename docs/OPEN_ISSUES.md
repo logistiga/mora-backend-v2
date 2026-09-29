@@ -61,6 +61,22 @@ Ce document suit les points encore ouverts qui ne bloquent pas l'avancement du b
 - Un test humain final reste necessaire pour juger la qualite UX d'un enchainement :
   question vocale -> snapshot explicite -> reponse multimodale -> animation avatar.
 
+## Phase I — Learning core / Essential User Profile
+
+### 9. Heuristique de repli sans LLM non validee sur un large corpus reel
+- Le mecanisme principal (appel LLM reel avec le profil essentiel dans le prompt) ne depend pas
+  de cette heuristique et couvre deja le cas reel rapporte ("Salam" -> reponse francaise codee en
+  dur).
+- L'heuristique `src/common/language/script-language.util.ts` ne sert que de repli quand aucun LLM
+  n'est configure du tout (aucune cle SYSTEM ni BYOK). Elle reconnait l'ecriture arabe, quelques
+  mots de salutation latinises tres courants (arabe/darija), les phonemes darija avec chiffres, et
+  des mots-outils francais/anglais basiques.
+- Elle n'a pas ete validee contre un corpus large et reel de darija/langues melangees, seulement le
+  cas reporte et des scenarios synthetiques (voir ses tests unitaires).
+- Un test humain final avec un compte sans LLM configure reste utile pour confirmer que ce repli
+  degrade proprement plutot que de mal deviner.
+- Voir [docs/LEARNING_CORE.md](LEARNING_CORE.md) pour le detail complet.
+
 ## Rappel de stabilisation finale
 
 Les points ci-dessus ne doivent pas etre oublies pendant la stabilisation finale de Mora v2 :

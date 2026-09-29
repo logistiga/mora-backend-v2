@@ -172,6 +172,13 @@ export class EnvironmentVariables {
   @IsInt()
   MORA_SUMMARY_MESSAGE_THRESHOLD?: number;
 
+  // Optional: bound on how many "essential" (cross-scope, durable) profile
+  // facts are loaded per request — see EssentialProfile in
+  // ProfileFactsService (learning-core phase).
+  @IsOptional()
+  @IsInt()
+  MORA_ESSENTIAL_PROFILE_LIMIT?: number;
+
   // Optional: master key for AiProvider secret encryption (Phase C.5). Absent
   // by design in most environments until the operator adds a real AI
   // provider — SecretEncryptionService rejects encrypt/decrypt calls with a

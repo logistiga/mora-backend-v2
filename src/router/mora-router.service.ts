@@ -53,6 +53,18 @@ const SENSITIVE_PATTERN =
 const TASK_PATTERN =
   /^(fais|cr[ée]e|envoie|planifie|rappelle|ajoute|supprime|annule|g[ée]n[èe]re|calcule|liste|montre|affiche)\b/i;
 
+// An explicit instruction teaching Mora a durable behaviour/communication
+// preference ("rappelle-toi que...", "souviens-toi que...", "à partir de
+// maintenant...", "je préfère que...", "remember that...", "from now on...")
+// must never land on "direct": only the personal/professional agents have a
+// write path (create_memory tool, background extraction) and are the ones
+// that end up feeding MemoryExtractionService → the Essential User Profile.
+// This is deliberately generic (phrasing patterns, not specific languages or
+// content) — see MemoryExtractionService for the durable-vs-temporary
+// judgment call, which stays with the LLM classifier, not this regex.
+const LEARNING_INSTRUCTION_PATTERN =
+  /\b(rappelle[- ]toi|souviens[- ]toi|retiens que|m[ée]morise|n['’]oublie pas que|[àa] partir de maintenant|d[ée]sormais|je pr[ée]f[èe]re que|remember that|from now on|i prefer that|تذكر|احتفظ ب|من الآن)\b/i;
+
 @Injectable()
 export class MoraRouterService {
   private readonly logger = new Logger(MoraRouterService.name);
@@ -153,6 +165,25 @@ export class MoraRouterService {
       });
     }
 
+    // An explicit "teach Mora a durable preference" instruction that matched
+    // neither the personal nor the professional keyword rules above still
+    // must never fall through to "direct" (no write path there) — default
+    // it to 'personal', the closest fit for a meta-preference about how
+    // Mora itself communicates. If it WAS also personal/professional-coded,
+    // one of the earlier branches already returned with that scope, so this
+    // never overrides an explicit professional-space teaching instruction.
+    if (LEARNING_INSTRUCTION_PATTERN.test(text)) {
+      return this.buildResult({
+        route: 'personal',
+        scope: 'personal',
+        space: 'personal',
+        intent: 'learn_preference',
+        text,
+        confidence: 0.8,
+        method: 'rules',
+      });
+    }
+
     const wordCount = text.split(/\s+/).filter(Boolean).length;
 
     // GREETING_PATTERN only checks the START of the message ("Bonjour...")
@@ -207,7 +238,10 @@ export class MoraRouterService {
               'Use "direct" ONLY for small talk or general knowledge that needs no access to the ' +
               "user's own data. Any request mentioning the user's documents, files, tasks, " +
               'reminders, calendar, contacts, emails, WhatsApp messages or stored memories must be ' +
-              '"personal" or "professional", never "direct".',
+              '"personal" or "professional", never "direct". A message that explicitly teaches the ' +
+              'assistant a durable behaviour or communication preference (e.g. "remember that...", ' +
+              '"from now on...", "I prefer that...", in any language) must also be "personal" or ' +
+              '"professional", never "direct" — only those routes can persist it.',
           },
           { role: 'user', content: text },
         ],
@@ -280,6 +314,7 @@ export class MoraRouterService {
   }
 
   private detectIntent(text: string): string {
+    if (LEARNING_INSTRUCTION_PATTERN.test(text)) return 'learn_preference';
     if (GREETING_PATTERN.test(text)) return 'greeting';
     if (TASK_PATTERN.test(text)) return 'task';
     if (text.trim().endsWith('?')) return 'question';

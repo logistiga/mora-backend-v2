@@ -10,6 +10,8 @@ import { MessageRole } from '../generated/prisma/client.js';
 import { LlmService } from '../llm/llm.service.js';
 import { ConversationSummaryService } from '../memory/conversation-summary.service.js';
 import { MemoryQueueService } from '../memory/queue/memory-queue.service.js';
+import { ProfileFactsService } from '../memory/profile-facts.service.js';
+import { detectScriptLanguage } from '../common/language/script-language.util.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
 import type { RouterDecisionResult } from '../router/router.types.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
@@ -79,6 +81,7 @@ export class MoraOrchestratorService {
     private readonly conversationSummaryService: ConversationSummaryService,
     private readonly toolExecutor: ToolExecutorService,
     private readonly llmService: LlmService,
+    private readonly profileFactsService: ProfileFactsService,
     configService: ConfigService,
   ) {
     this.crossScopeEnabled = configService.get<boolean>('app.crossScopeEnabled') ?? false;
@@ -378,21 +381,35 @@ export class MoraOrchestratorService {
   /**
    * `direct` is the no-scope lane: small talk and general-knowledge
    * questions that belong to neither the personal nor the professional
-   * agent. It used to return a canned string for everything, so a plain
-   * question ("Quelle est la capitale du Maroc ?") — which the router
-   * legitimately classifies as `direct` — was answered with "D'accord."
-   * and read as a refusal. Greetings stay canned (free and instant);
-   * anything else gets a real, contextless LLM answer with no memory, no
-   * tools and no scoped history, so nothing leaks across scopes.
+   * agent. "No scope/domain retrieval" (no memories, no documents, no
+   * tools — nothing that could leak personal/professional data) must NOT
+   * mean "memoryless of the user entirely": the small, bounded Essential
+   * User Profile (language behaviour, address form, greeting/response
+   * style — see ProfileFactsService.getEssential) is always fetched and
+   * handed to the model here, including for greetings.
+   *
+   * This used to short-circuit greetings with a single hardcoded French
+   * string and skip the LLM call entirely — found (learning-core phase
+   * audit) to be the root cause of a taught "always answer in the language
+   * I used" preference never applying to a later "Salam": the greeting
+   * branch never looked at the Essential Profile, never called the model,
+   * and so could not have honoured any preference no matter how it was
+   * stored. Every direct-route message, greeting or not, now takes the
+   * same path: fetch the Essential Profile, ask the model, and only fall
+   * back to a fixed string if no LLM is configured at all.
    */
   private async handleDirect(
     user: AgentUser,
     message: string,
     decision: RouterDecisionResult,
   ): Promise<{ content: string; metadata: Record<string, unknown> }> {
-    if (decision.intent === 'greeting') {
-      return { content: "Bonjour ! Comment puis-je vous aider aujourd'hui ?", metadata: { agent: 'direct' } };
-    }
+    const essentialFacts = await this.profileFactsService.getEssential(user.id);
+    const essentialFactsText =
+      essentialFacts.length > 0
+        ? "\nPréférences essentielles de l'utilisateur (s'appliquent à toute réponse, y compris une simple " +
+          'salutation) :\n' +
+          essentialFacts.map((f) => `- ${f.key}: ${f.value}`).join('\n')
+        : '';
 
     const response = await this.llmService.complete(
       {
@@ -401,11 +418,15 @@ export class MoraOrchestratorService {
             role: 'system',
             content:
               `Tu es Mora, l'assistant de ${user.displayName}. ` +
-              "Réponds directement et de façon concise à la question ou au message ci-dessous, en français. " +
+              'Réponds directement et de façon concise au message ci-dessous. ' +
+              "Détecte la langue et le registre du message de l'utilisateur et réponds dans cette même langue, " +
+              "sauf si une préférence essentielle ci-dessous dit explicitement le contraire (ex: \"réponds " +
+              'toujours en français"). ' +
               "Tu n'as ici accès ni aux données personnelles ni aux données professionnelles de l'utilisateur : " +
-              "réponds uniquement sur des connaissances générales. Si la demande nécessite réellement ses " +
-              "données personnelles ou professionnelles, dis-le simplement et demande la précision utile — " +
-              'sans jamais inventer de contenu le concernant.',
+              "réponds uniquement sur des connaissances générales et les préférences essentielles ci-dessous. " +
+              "Si la demande nécessite réellement ses données personnelles ou professionnelles, dis-le " +
+              'simplement et demande la précision utile — sans jamais inventer de contenu le concernant.' +
+              essentialFactsText,
           },
           { role: 'user', content: message },
         ],
@@ -418,14 +439,53 @@ export class MoraOrchestratorService {
     if (response.configured && response.content.trim().length > 0) {
       return {
         content: response.content,
-        metadata: { agent: 'direct', llmConfigured: true, llmProvider: response.provider },
+        metadata: {
+          agent: 'direct',
+          llmConfigured: true,
+          llmProvider: response.provider,
+          essentialFactsUsed: essentialFacts.length,
+        },
       };
     }
 
-    return { content: this.buildDirectFallbackReply(decision), metadata: { agent: 'direct', llmConfigured: false } };
+    return {
+      content: this.buildDirectFallbackReply(decision, message, essentialFacts),
+      metadata: { agent: 'direct', llmConfigured: false, essentialFactsUsed: essentialFacts.length },
+    };
   }
 
-  private buildDirectFallbackReply(decision: RouterDecisionResult): string {
+  /**
+   * No LLM configured at all: the only path left is a fixed string — never
+   * fabricate a real answer. This still makes a best-effort, generic
+   * (non-user-specific) attempt at a learned language preference via a
+   * plain script/vocabulary heuristic (see detectScriptLanguage) — a real
+   * model is always preferred and used whenever one is configured; this
+   * branch only exists for the fully-degraded case.
+   */
+  private buildDirectFallbackReply(
+    decision: RouterDecisionResult,
+    message: string,
+    essentialFacts: Array<{ key: string; value: string }>,
+  ): string {
+    if (decision.intent === 'greeting') {
+      const languagePref = essentialFacts.find((f) => f.key === 'language_behavior');
+      const detected = detectScriptLanguage(message);
+      const GREETINGS: Record<'ar' | 'fr' | 'en' | 'darija', string> = {
+        ar: 'مرحباً! كيف يمكنني مساعدتك اليوم؟',
+        fr: "Bonjour ! Comment puis-je vous aider aujourd'hui ?",
+        en: 'Hello! How can I help you today?',
+        darija: 'Salam! Kifach n9der n3awnek lyoum?',
+      };
+      // Only ever reacts to the CURRENT message's own detected script — this
+      // is not "if languagePref mentions arabic, always reply in arabic"
+      // (that would need real language understanding this heuristic doesn't
+      // have); it only confirms a preference exists before trusting the
+      // detector over the fixed French default.
+      if (languagePref && detected !== 'unknown') {
+        return GREETINGS[detected];
+      }
+      return GREETINGS.fr;
+    }
     if (decision.intent === 'unknown') {
       return "Je ne suis pas certain de bien comprendre votre demande. Pouvez-vous préciser s'il s'agit d'un sujet personnel ou professionnel ?";
     }

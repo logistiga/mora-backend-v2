@@ -18,17 +18,21 @@ function buildService() {
     create: vi.fn(async () => ({ id: 'created-1' })),
     supersede: vi.fn(async () => ({ old: { id: 'old' }, replacement: { id: 'new' } })),
   };
+  const profileFactsServiceMock = {
+    upsertEssential: vi.fn(async () => ({ id: 'essential-1' })),
+  };
   const entitiesServiceMock = { findOrCreate: vi.fn(async () => ({ id: 'entity-1' })) };
   const prismaMock = { memoryEntity: { upsert: vi.fn() } };
 
   const service = new MemoryExtractionService(
     llmServiceMock as never,
     memoryServiceMock as never,
+    profileFactsServiceMock as never,
     entitiesServiceMock as never,
     prismaMock as never,
   );
 
-  return { service, llmServiceMock, memoryServiceMock, entitiesServiceMock, prismaMock };
+  return { service, llmServiceMock, memoryServiceMock, profileFactsServiceMock, entitiesServiceMock, prismaMock };
 }
 
 describe('MemoryExtractionService', () => {
@@ -59,10 +63,10 @@ describe('MemoryExtractionService', () => {
     });
   });
 
-  describe('proposeCandidates', () => {
+  describe('proposeCandidates — memories', () => {
     it('never calls the LLM for trivial input', async () => {
       const result = await ctx.service.proposeCandidates('Merci', 'De rien', { userId: 'u1' });
-      expect(result).toEqual([]);
+      expect(result).toEqual({ memories: [], essentialFacts: [] });
       expect(ctx.llmServiceMock.complete).not.toHaveBeenCalled();
     });
 
@@ -72,15 +76,16 @@ describe('MemoryExtractionService', () => {
         'Compris, je serai bref.',
         { userId: 'u1' },
       );
-      expect(result).toEqual([]);
+      expect(result).toEqual({ memories: [], essentialFacts: [] });
     });
 
-    it('parses valid JSON candidates from a configured LLM', async () => {
+    it('parses valid memory candidates from a configured LLM', async () => {
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
-        content: JSON.stringify([
-          { kind: 'preference', content: 'Préfère les rappels courts', importance: 0.7, confidence: 0.8 },
-        ]),
+        content: JSON.stringify({
+          memories: [{ kind: 'preference', content: 'Préfère les rappels courts', importance: 0.7, confidence: 0.8 }],
+          essentialFacts: [],
+        }),
         provider: 'test',
         model: 'test-model',
       });
@@ -95,8 +100,9 @@ describe('MemoryExtractionService', () => {
         expect.anything(),
         expect.objectContaining({ userId: 'u1', scope: 'personal', space: 'personal' }),
       );
-      expect(result).toHaveLength(1);
-      expect(result[0].kind).toBe('preference');
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].kind).toBe('preference');
+      expect(result.essentialFacts).toEqual([]);
     });
 
     it('returns no candidates when the LLM output is not valid JSON', async () => {
@@ -113,16 +119,19 @@ describe('MemoryExtractionService', () => {
         { userId: 'u1' },
       );
 
-      expect(result).toEqual([]);
+      expect(result).toEqual({ memories: [], essentialFacts: [] });
     });
 
     it('drops malformed candidate entries but keeps valid ones', async () => {
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
-        content: JSON.stringify([
-          { kind: 'not-a-real-kind', content: 'x' },
-          { kind: 'fact', content: 'Le client paie à 30 jours' },
-        ]),
+        content: JSON.stringify({
+          memories: [
+            { kind: 'not-a-real-kind', content: 'x' },
+            { kind: 'fact', content: 'Le client paie à 30 jours' },
+          ],
+          essentialFacts: [],
+        }),
         provider: 'test',
         model: 'test-model',
       });
@@ -133,8 +142,148 @@ describe('MemoryExtractionService', () => {
         { userId: 'u1' },
       );
 
-      expect(result).toHaveLength(1);
-      expect(result[0].kind).toBe('fact');
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].kind).toBe('fact');
+    });
+  });
+
+  describe('proposeCandidates — essential facts (learning-core: test A/B fixture)', () => {
+    it('parses a durable, cross-scope language preference as an essential fact, not a memory', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [],
+          essentialFacts: [
+            {
+              key: 'language_behavior',
+              value: "Répond dans la langue utilisée par l'utilisateur (arabe, français, ou autre)",
+              confidence: 0.9,
+            },
+          ],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates(
+        'Quand je te parle en arabe, réponds en arabe, et en français si je parle français',
+        "D'accord, je vais répondre dans la langue que tu utilises.",
+        { userId: 'u1', scope: 'personal', space: 'personal' },
+      );
+
+      expect(result.memories).toEqual([]);
+      expect(result.essentialFacts).toHaveLength(1);
+      expect(result.essentialFacts[0]).toMatchObject({ key: 'language_behavior' });
+    });
+
+    it('normalizes a messy proposed key into snake_case and bounds its length', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [],
+          essentialFacts: [{ key: '  Language Behavior!! ', value: 'x', confidence: 0.8 }],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('message assez long pour compter', 'ok', { userId: 'u1' });
+      expect(result.essentialFacts[0].key).toBe('language_behavior');
+    });
+
+    it('caps essential facts at 2 even if the model proposes more', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [],
+          essentialFacts: [
+            { key: 'a', value: '1', confidence: 0.9 },
+            { key: 'b', value: '2', confidence: 0.9 },
+            { key: 'c', value: '3', confidence: 0.9 },
+          ],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('message assez long pour compter', 'ok', { userId: 'u1' });
+      expect(result.essentialFacts).toHaveLength(2);
+    });
+
+    it('never learns a one-off/temporary instruction as durable (test F fixture)', async () => {
+      // The extraction prompt is explicit that "réponds-moi en anglais pour
+      // ce message" is a one-off, not a preference — modelled here by the
+      // (mocked) LLM correctly returning nothing, which is exactly the
+      // behaviour under test: proposeCandidates must not itself invent a
+      // durable candidate out of thin air for a message this shape.
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({ memories: [], essentialFacts: [] }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates(
+        'Réponds-moi en anglais pour ce message seulement, rien de plus',
+        'Sure, just for this one.',
+        { userId: 'u1' },
+      );
+
+      expect(result.memories).toEqual([]);
+      expect(result.essentialFacts).toEqual([]);
+    });
+  });
+
+  describe('proposeCandidates — secret guard (test J)', () => {
+    it('drops a memory candidate whose content contains a secret-shaped value', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [{ kind: 'fact', content: 'La clé API du client est sk-liveabcdef1234567890', confidence: 0.8 }],
+          essentialFacts: [],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('message assez long pour compter, avec un secret', 'ok', {
+        userId: 'u1',
+      });
+      expect(result.memories).toEqual([]);
+    });
+
+    it('drops an essential fact candidate whose value contains a secret-shaped value', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [],
+          essentialFacts: [{ key: 'login_info', value: 'password=hunter2', confidence: 0.9 }],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('message assez long pour compter, avec un secret', 'ok', {
+        userId: 'u1',
+      });
+      expect(result.essentialFacts).toEqual([]);
+    });
+
+    it('drops an essential fact candidate whose key itself names a credential', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: JSON.stringify({
+          memories: [],
+          essentialFacts: [{ key: 'api_key', value: 'some non-secret-shaped description', confidence: 0.9 }],
+        }),
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('message assez long pour compter, avec un secret', 'ok', {
+        userId: 'u1',
+      });
+      expect(result.essentialFacts).toEqual([]);
     });
   });
 
@@ -206,6 +355,21 @@ describe('MemoryExtractionService', () => {
       });
 
       expect(ctx.entitiesServiceMock.findOrCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('commitEssentialFacts', () => {
+    it('delegates each candidate to ProfileFactsService.upsertEssential', async () => {
+      await ctx.service.commitEssentialFacts({
+        userId: 'u1',
+        sourceMessageId: 'msg1',
+        candidates: [{ key: 'language_behavior', value: "Répond dans la langue de l'utilisateur", confidence: 0.9 }],
+      });
+
+      expect(ctx.profileFactsServiceMock.upsertEssential).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ key: 'language_behavior', source: 'extraction', sourceId: 'msg1' }),
+      );
     });
   });
 });

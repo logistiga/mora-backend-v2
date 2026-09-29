@@ -75,7 +75,8 @@ export class ContextBuilderService {
    * via ConversationsService.getScopedHistory).
    */
   async build(params: ContextBuilderParams): Promise<ContextBuilderResult> {
-    const [profileFacts, summary, history] = await Promise.all([
+    const [essentialFacts, profileFacts, summary, history] = await Promise.all([
+      this.profileFactsService.getEssential(params.userId),
       this.profileFactsService.getRelevant(params.userId, params.scope, params.space),
       this.conversationSummaryService.getSummary(params.conversationId, params.scope, params.space),
       this.conversationsService.getScopedHistory(
@@ -111,6 +112,17 @@ export class ContextBuilderService {
       usedChars += content.length;
       return true;
     };
+
+    // Essential facts first: small, cross-scope, durable preferences
+    // (language behaviour, address form, greeting/response style) that
+    // should shape virtually every response, pushed before the
+    // scope-specific facts below so they never get budget-starved out.
+    if (essentialFacts.length > 0) {
+      const essentialText =
+        "Préférences essentielles de l'utilisateur (s'appliquent à toute réponse, quel que soit le sujet) :\n" +
+        essentialFacts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
+      pushIfBudgetAllows(essentialText);
+    }
 
     if (profileFacts.length > 0) {
       const factsText =

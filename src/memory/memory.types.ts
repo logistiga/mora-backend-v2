@@ -39,6 +39,18 @@ export interface MemoryCandidate {
   confidence: number; // 0..1
 }
 
+/**
+ * A durable, cross-scope preference candidate proposed by
+ * MemoryExtractionService — persisted via ProfileFactsService.upsertEssential
+ * into the Essential User Profile (see profile-facts.service.ts), never into
+ * the scope-bound Memory table.
+ */
+export interface EssentialFactCandidate {
+  key: string;
+  value: string;
+  confidence: number; // 0..1
+}
+
 /** A retrieved memory plus how/why it was ranked (never returned bare). */
 export interface RetrievedMemory {
   id: string;

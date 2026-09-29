@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { containsSecret, isForbiddenKeyName } from '../common/security/secret-patterns.js';
 import { EntitiesService } from './entities.service.js';
 import { MemoryService } from './memory.service.js';
+import { ProfileFactsService } from './profile-facts.service.js';
 import type { CreateMemoryDto } from './dto/create-memory.dto.js';
-import { MEMORY_KINDS, type MemoryCandidate, type MemoryKind } from './memory.types.js';
+import { MEMORY_KINDS, type EssentialFactCandidate, type MemoryCandidate, type MemoryKind } from './memory.types.js';
 
 const ENTITY_KIND_TYPES = new Set(['person', 'company']);
 
@@ -13,21 +15,43 @@ const ENTITY_KIND_TYPES = new Set(['person', 'company']);
 const TRIVIAL_PATTERN =
   /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|merci beaucoup|ok|d'accord|oui|non|parfait|très bien|super|cool|au revoir|à bientôt)\W*$/i;
 const MIN_WORD_COUNT = 4;
+const MAX_ESSENTIAL_CANDIDATES = 2;
 
 const EXTRACTION_SYSTEM_PROMPT =
   'Tu identifies les informations DURABLES et utiles à mémoriser dans un échange entre un ' +
-  "utilisateur et son assistant. Réponds UNIQUEMENT avec un tableau JSON (0 à 3 éléments), " +
-  'chaque élément ayant la forme {"kind": "...", "content": "...", "importance": 0-1, "confidence": 0-1}. ' +
-  `"kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}. ` +
-  "Ignore les salutations, remerciements, confirmations triviales, demandes ponctuelles sans intérêt futur. " +
-  'Ne mémorise que: préférences durables, décisions, personnes/sociétés importantes, projets, habitudes, ' +
-  "procédures, événements marquants, faits durables. Cela inclut explicitement les préférences de " +
-  "communication de l'utilisateur (ex: le ton, la longueur, le style de réponse qu'il souhaite de la " +
-  'part de l\'assistant) — ce sont des préférences durables (kind: "preference") au même titre que ' +
-  "les autres, même si elles s'adressent à l'assistant plutôt qu'à un tiers. " +
-  'Exemple : utilisateur dit "je préfère des réponses courtes et directes" → ' +
-  '[{"kind":"preference","content":"Préfère des réponses courtes et directes de la part de Mora","importance":0.7,"confidence":0.8}]. ' +
-  'Si rien ne mérite d\'être retenu, réponds "[]".';
+  'utilisateur et son assistant. Réponds UNIQUEMENT avec un objet JSON de la forme ' +
+  '{"memories": [...], "essentialFacts": [...]}. Aucun texte hors de ce JSON.\n\n' +
+  '"memories" (0 à 3 éléments) : informations durables propres AU SUJET/CONTEXTE de cette ' +
+  'conversation (scope actuel uniquement) — décisions, personnes/sociétés, projets, habitudes, ' +
+  'procédures, événements, faits. Forme : {"kind": "...", "content": "...", "importance": 0-1, ' +
+  `"confidence": 0-1}. "kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}.\n\n` +
+  '"essentialFacts" (0 à 2 éléments) : préférences DURABLES et TRANSVERSALES qui doivent ' +
+  "s'appliquer à QUASIMENT TOUTE réponse future de l'assistant, quel que soit le sujet ou le " +
+  'scope (personnel, professionnel, ou une simple salutation) — typiquement : comportement ' +
+  'linguistique ("répondre dans la langue utilisée par l\'utilisateur", "toujours répondre en ' +
+  'français"), forme d\'adresse, style de salutation, style de réponse général (longueur, ton). ' +
+  'Forme : {"key": "identifiant_court_en_snake_case", "value": "description complète et autonome ' +
+  'de la préférence", "confidence": 0-1}. Clés typiques : "language_behavior", "form_of_address", ' +
+  '"greeting_style", "response_style" — mais toute clé courte et descriptive est acceptée si aucune ' +
+  "de celles-ci ne convient.\n\n" +
+  'RÈGLES DE DISTINCTION (important) :\n' +
+  '- Une préférence DURABLE ("quand je parle français, réponds-moi en français", "je préfère que ' +
+  'tu sois concis", "appelle-moi toujours docteur") → à retenir (memories si scope-spécifique, ' +
+  'essentialFacts si transversale comme la langue ou le style général).\n' +
+  '- Une demande PONCTUELLE, valable pour ce seul message ("réponds-moi en anglais pour ce ' +
+  'message", "sois bref cette fois") → NE JAMAIS la mémoriser, dans aucune des deux listes.\n' +
+  '- Un fait DURABLE sur le sujet en cours ("mon entreprise s\'appelle LogistiGA") → memories, ' +
+  'jamais essentialFacts (ce n\'est pas transversal).\n' +
+  '- Une information CONTEXTUELLE temporaire ("je suis dans un taxi maintenant") → à ignorer ' +
+  'complètement.\n' +
+  '- Ignore les salutations, remerciements, confirmations triviales, demandes ponctuelles sans ' +
+  "intérêt futur.\n\n" +
+  'Exemple : utilisateur dit "quand je te parle en arabe, réponds en arabe, et en français si je te ' +
+  'parle en français" → ' +
+  '{"memories":[],"essentialFacts":[{"key":"language_behavior","value":"Répond systématiquement ' +
+  "dans la langue utilisée par l'utilisateur dans son dernier message (arabe, français, ou toute " +
+  'autre langue), plutôt que dans une langue fixe","confidence":0.9}]}.\n' +
+  'Si rien ne mérite d\'être retenu, réponds {"memories":[],"essentialFacts":[]}.';
 
 @Injectable()
 export class MemoryExtractionService {
@@ -36,6 +60,7 @@ export class MemoryExtractionService {
   constructor(
     private readonly llmService: LlmService,
     private readonly memoryService: MemoryService,
+    private readonly profileFactsService: ProfileFactsService,
     private readonly entitiesService: EntitiesService,
     private readonly prisma: PrismaService,
   ) {}
@@ -52,9 +77,9 @@ export class MemoryExtractionService {
     userMessage: string,
     assistantResponse: string,
     context: { userId: string; scope?: string; space?: string },
-  ): Promise<MemoryCandidate[]> {
+  ): Promise<{ memories: MemoryCandidate[]; essentialFacts: EssentialFactCandidate[] }> {
     if (!this.isWorthConsidering(userMessage)) {
-      return [];
+      return { memories: [], essentialFacts: [] };
     }
 
     const response = await this.llmService.complete(
@@ -67,38 +92,46 @@ export class MemoryExtractionService {
           },
         ],
         temperature: 0,
-        maxTokens: 400,
+        maxTokens: 500,
       },
       { userId: context.userId, scope: context.scope, space: context.space, route: 'memory-extraction' },
     );
 
     if (!response.configured) {
       // No LLM (env or DB) → no extraction. Documented limitation, never blocks the app.
-      return [];
+      return { memories: [], essentialFacts: [] };
     }
 
     return this.parseCandidates(response.content);
   }
 
-  private parseCandidates(raw: string): MemoryCandidate[] {
+  private parseCandidates(raw: string): { memories: MemoryCandidate[]; essentialFacts: EssentialFactCandidate[] } {
     try {
       const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return [];
+      const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 
-      return parsed
-        .filter(
-          (item): item is Record<string, unknown> => typeof item === 'object' && item !== null,
-        )
-        .map((item) => this.coerceCandidate(item))
+      const memories = (Array.isArray(obj.memories) ? obj.memories : [])
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => this.coerceMemoryCandidate(item))
         .filter((c): c is MemoryCandidate => c !== null)
+        .filter((c) => !containsSecret(c.content))
         .slice(0, 3);
+
+      const essentialFacts = (Array.isArray(obj.essentialFacts) ? obj.essentialFacts : [])
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => this.coerceEssentialCandidate(item))
+        .filter((c): c is EssentialFactCandidate => c !== null)
+        .filter((c) => !isForbiddenKeyName(c.key) && !containsSecret(c.value))
+        .slice(0, MAX_ESSENTIAL_CANDIDATES);
+
+      return { memories, essentialFacts };
     } catch (error) {
       this.logger.warn(`Memory extraction returned unparsable output: ${String(error)}`);
-      return [];
+      return { memories: [], essentialFacts: [] };
     }
   }
 
-  private coerceCandidate(item: Record<string, unknown>): MemoryCandidate | null {
+  private coerceMemoryCandidate(item: Record<string, unknown>): MemoryCandidate | null {
     const kind = MEMORY_KINDS.includes(item.kind as MemoryKind) ? (item.kind as MemoryKind) : null;
     const content = typeof item.content === 'string' ? item.content.trim() : '';
     if (!kind || !content) return null;
@@ -107,6 +140,18 @@ export class MemoryExtractionService {
       kind,
       content,
       importance: clamp01(typeof item.importance === 'number' ? item.importance : 0.5),
+      confidence: clamp01(typeof item.confidence === 'number' ? item.confidence : 0.5),
+    };
+  }
+
+  private coerceEssentialCandidate(item: Record<string, unknown>): EssentialFactCandidate | null {
+    const key = typeof item.key === 'string' ? normalizeKey(item.key) : '';
+    const value = typeof item.value === 'string' ? item.value.trim() : '';
+    if (!key || !value) return null;
+
+    return {
+      key,
+      value,
       confidence: clamp01(typeof item.confidence === 'number' ? item.confidence : 0.5),
     };
   }
@@ -168,6 +213,28 @@ export class MemoryExtractionService {
     }
   }
 
+  /**
+   * Persists candidates as Essential Profile facts (ProfileFactsService,
+   * scope='essential') — matched and superseded by `key`, not content
+   * similarity, since these are structured preferences (AGENTS learning-
+   * core §7 correction/supersession).
+   */
+  async commitEssentialFacts(params: {
+    userId: string;
+    sourceMessageId: string;
+    candidates: EssentialFactCandidate[];
+  }): Promise<void> {
+    for (const candidate of params.candidates) {
+      await this.profileFactsService.upsertEssential(params.userId, {
+        key: candidate.key,
+        value: candidate.value,
+        confidence: candidate.confidence,
+        source: 'extraction',
+        sourceId: params.sourceMessageId,
+      });
+    }
+  }
+
   /** Best-effort: a person/company memory also gets a deduped Entity row + link. */
   private async linkEntity(
     userId: string,
@@ -197,4 +264,13 @@ export class MemoryExtractionService {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeKey(key: string): string {
+  return key
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .slice(0, 60);
 }

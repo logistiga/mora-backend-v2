@@ -23,6 +23,7 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
   };
   const toolExecutor = { requestExecution: vi.fn() };
   const llmService = { complete: vi.fn(async () => ({ configured: false, content: '', provider: 'none', model: null })) };
+  const profileFactsService = { getEssential: vi.fn(async () => [] as Array<{ key: string; value: string }>) };
 
   const service = new MoraOrchestratorService(
     routerService as never,
@@ -35,6 +36,7 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
     conversationSummaryService as never,
     toolExecutor as never,
     llmService as never,
+    profileFactsService as never,
     configService as never,
   );
 
@@ -50,6 +52,7 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
     conversationSummaryService,
     toolExecutor,
     llmService,
+    profileFactsService,
   };
 }
 
@@ -403,6 +406,99 @@ describe('MoraOrchestratorService', () => {
     await flushMicrotasks();
 
     expect(ctx.memoryQueue.enqueueExtraction).not.toHaveBeenCalled();
+  });
+
+  describe('learning-core: direct route + Essential User Profile (test B/G fixture)', () => {
+    it('fetches the Essential User Profile for a direct-route greeting (root cause of the "Salam" bug)', async () => {
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+
+      await ctx.service.handleMessage({ user, message: 'Salam.' });
+
+      // This is the regression guard for the real bug under investigation:
+      // greetings used to short-circuit with a hardcoded string BEFORE ever
+      // looking at the user's profile. Now every direct-route turn — greeting
+      // or not — always consults it first.
+      expect(ctx.profileFactsService.getEssential).toHaveBeenCalledWith('u1');
+    });
+
+    it('passes essential facts into the direct-route system prompt so the LLM can honour them', async () => {
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+      ctx.profileFactsService.getEssential.mockResolvedValue([
+        { key: 'language_behavior', value: "Répond dans la langue utilisée par l'utilisateur" },
+      ]);
+      ctx.llmService.complete.mockResolvedValue({
+        configured: true,
+        content: 'مرحباً! كيف يمكنني مساعدتك؟',
+        provider: 'openai',
+        model: null,
+      });
+
+      const result = await ctx.service.handleMessage({ user, message: 'Salam.' });
+
+      const [request] = ctx.llmService.complete.mock.calls[0] as unknown as [{ messages: Array<{ content: string }> }];
+      const systemMessage = request.messages[0].content;
+      expect(systemMessage).toContain('language_behavior');
+      expect(systemMessage).toContain("Répond dans la langue utilisée par l'utilisateur");
+      expect(result.response).toBe('مرحباً! كيف يمكنني مساعدتك؟');
+    });
+
+    it('falls back to an honest, non-hardcoded-language greeting (never a silent French default) when no LLM is configured but a language preference exists', async () => {
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+      ctx.profileFactsService.getEssential.mockResolvedValue([
+        { key: 'language_behavior', value: "Répond dans la langue utilisée par l'utilisateur" },
+      ]);
+      // llmService.complete defaults to `configured: false` in this test file.
+
+      const result = await ctx.service.handleMessage({ user, message: 'Salam.' });
+
+      expect(result.response).not.toBe("Bonjour ! Comment puis-je vous aider aujourd'hui ?");
+      expect(result.response).toMatch(/مرحباً/);
+    });
+
+    it('still defaults to French when no language preference is stored at all (no over-guessing)', async () => {
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+      // No essential facts stored (default mock) and no LLM configured.
+
+      const result = await ctx.service.handleMessage({ user, message: 'Salam.' });
+
+      expect(result.response).toBe("Bonjour ! Comment puis-je vous aider aujourd'hui ?");
+    });
   });
 
   describe('tool-calling confirmation contract (post-review correction)', () => {
