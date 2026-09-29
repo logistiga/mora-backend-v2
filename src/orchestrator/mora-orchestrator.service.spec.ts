@@ -482,6 +482,56 @@ describe('MoraOrchestratorService', () => {
       expect(result.response).toMatch(/مرحباً/);
     });
 
+    it('injects the shared, generic language-selection policy into the direct-route system prompt (language-selection-policy fix)', async () => {
+      // Regression guard: a real staging voice test found that once a
+      // conversation had an active personal/professional scope, later turns
+      // stopped honouring the taught language preference — because only
+      // handleDirect had an (ad hoc) language instruction; the personal/
+      // professional agent path had none. The fix centralizes one shared
+      // instruction (LANGUAGE_POLICY_INSTRUCTION) and injects it at both
+      // call sites so they can never drift apart again.
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+
+      await ctx.service.handleMessage({ user, message: 'Salam.' });
+
+      const [request] = ctx.llmService.complete.mock.calls[0] as unknown as [{ messages: Array<{ content: string }> }];
+      const systemMessage = request.messages[0].content;
+      expect(systemMessage).toContain('Politique de langue');
+      expect(systemMessage).toMatch(/priorité/i);
+    });
+
+    it('appends an externalContextNotes signal (e.g. STT-detected-language) to the direct-route system prompt when provided', async () => {
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'direct',
+        scope: 'direct',
+        space: 'direct',
+        intent: 'greeting',
+        complexity: 'low',
+        securityLevel: 'low',
+        confidence: 0.9,
+        method: 'rules',
+      });
+
+      await ctx.service.handleMessage({
+        user,
+        message: 'Salam.',
+        externalContextNotes: ['Signal secondaire (reconnaissance vocale, indicatif seulement) : langue = "ar".'],
+      });
+
+      const [request] = ctx.llmService.complete.mock.calls[0] as unknown as [{ messages: Array<{ content: string }> }];
+      const systemMessage = request.messages[0].content;
+      expect(systemMessage).toContain('Signal secondaire');
+    });
+
     it('still defaults to French when no language preference is stored at all (no over-guessing)', async () => {
       ctx.routerService.classify.mockResolvedValue({
         route: 'direct',

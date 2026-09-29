@@ -394,6 +394,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       languageHint: state.language,
     });
     const transcript = await sttSession.finalize();
+    const sttDetectedLanguage = sttSession.getLastDetectedLanguage?.();
     const sttLatencyMs = Date.now() - sttStarted;
     voiceDebug('stt_final', { sessionId, transcriptLength: transcript.length, sttLatencyMs });
     // Metadata only: the transcript is user speech content and must not
@@ -401,6 +402,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     voiceDebug('transcript.final', {
       sessionId,
       languageHint: state.language,
+      sttDetectedLanguage,
       transcriptLength: transcript.length,
       sttLatencyMs,
     });
@@ -511,7 +513,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
       },
     };
 
-    await this.turnRunner.run(state, turn.id, generationId, transcript, { sttLatencyMs }, events);
+    await this.turnRunner.run(state, turn.id, generationId, transcript, { sttLatencyMs }, events, sttDetectedLanguage);
     // Only clear currentTurnId if it's STILL this turn — a newer turn may
     // have already started (and overwritten it) while this run() was
     // finishing up its own stale-generation abandonment; never clobber it.

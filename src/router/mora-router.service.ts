@@ -28,6 +28,16 @@ const PROFESSIONAL_GENERAL_PATTERN =
   /\b(travail|entreprise|client|facture|devis|r[ée]union|projet|coll[èe]gue|patron|contrat|budget|rapport)\b/i;
 
 const GREETING_PATTERN = /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|salam|ok|d'accord)\b/i;
+// Arabic-script greetings/thanks (Standard Arabic and Darija use the same
+// script). `\b` word boundaries don't work reliably on non-Latin scripts in a
+// non-unicode-aware regex (JS's default \w is ASCII-only), so this is
+// anchored to the start of the message instead, mirroring GREETING_PATTERN's
+// own start-anchoring rather than relying on \b. Generic, common greeting
+// vocabulary only — not tied to any specific user or conversation.
+const GREETING_PATTERN_ARABIC_SCRIPT =
+  /^\s*(السلام عليكم|وعليكم السلام|سلام|مرحبا|أهلا|اهلا|شكرا|صباح الخير|مساء الخير)/;
+const isGreeting = (text: string): boolean =>
+  GREETING_PATTERN.test(text) || GREETING_PATTERN_ARABIC_SCRIPT.test(text);
 // A message must be this short (in words) for a leading greeting to route it
 // "direct" on its own — otherwise the greeting is just an opener on a
 // substantive message that deserves real routing (see GREETING_PATTERN use below).
@@ -195,7 +205,7 @@ export class MoraRouterService {
     // genuine small talk ("Bonjour", "Bonjour Mora") on the fast direct
     // path while letting longer messages fall through. Found via real
     // end-to-end validation (Phase C.6) with a live LLM configured.
-    const isShortGreeting = GREETING_PATTERN.test(text) && wordCount <= GREETING_MAX_WORDS;
+    const isShortGreeting = isGreeting(text) && wordCount <= GREETING_MAX_WORDS;
 
     if (isShortGreeting || FACTUAL_DIRECT_PATTERN.test(text)) {
       return this.buildResult({
@@ -315,7 +325,7 @@ export class MoraRouterService {
 
   private detectIntent(text: string): string {
     if (LEARNING_INSTRUCTION_PATTERN.test(text)) return 'learn_preference';
-    if (GREETING_PATTERN.test(text)) return 'greeting';
+    if (isGreeting(text)) return 'greeting';
     if (TASK_PATTERN.test(text)) return 'task';
     if (text.trim().endsWith('?')) return 'question';
     return 'information';

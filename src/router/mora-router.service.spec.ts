@@ -228,4 +228,30 @@ describe('MoraRouterService', () => {
       expect(result.route).toBe('direct');
     });
   });
+
+  describe('Arabic-script greeting recognition (language-selection-policy fix)', () => {
+    // Regression: a real voice test showed "السلام عليكم" behaved
+    // inconsistently mid-conversation compared to the Latin-script "Salam",
+    // which already worked reliably. Root cause: GREETING_PATTERN only
+    // matched Latin script, so an Arabic-script greeting's `intent` never
+    // became 'greeting' — the one thing that lets applyConversationContinuity
+    // (MoraOrchestratorService) keep a mid-conversation greeting on the
+    // "direct" route instead of rerouting it into an already-active
+    // personal/professional scope.
+    it.each(['السلام عليكم', 'وعليكم السلام', 'سلام', 'مرحبا', 'أهلا', 'شكرا', 'صباح الخير', 'مساء الخير'])(
+      'classifies the Arabic-script greeting/thanks "%s" as direct with intent=greeting',
+      async (text) => {
+        const result = await service.classify(text);
+        expect(result.route).toBe('direct');
+        expect(result.intent).toBe('greeting');
+      },
+    );
+
+    it('still classifies a longer Arabic-script message (not just a greeting) normally, not as a forced greeting', async () => {
+      const result = await service.classify(
+        'مرحبا، هل يمكنك أن تشرح لي كيف يعمل النظام الشمسي بالتفصيل من فضلك؟',
+      );
+      expect(result.intent).not.toBe('greeting');
+    });
+  });
 });

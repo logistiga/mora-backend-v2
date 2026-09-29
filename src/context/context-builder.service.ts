@@ -7,6 +7,7 @@ import { MemoryRetrievalService } from '../memory/memory-retrieval.service.js';
 import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import type { LlmMessage } from '../llm/llm-provider.interface.js';
 import type { RetrievedMemory } from '../memory/memory.types.js';
+import { LANGUAGE_POLICY_INSTRUCTION } from '../common/language/language-policy-prompt.js';
 
 /**
  * Prompt-injection defense (AGENTS Phase E §48/§49): documents, emails,
@@ -103,8 +104,13 @@ export class ContextBuilderService {
     const messages: LlmMessage[] = [
       { role: 'system', content: params.systemPrompt },
       { role: 'system', content: UNTRUSTED_CONTENT_GUARD },
+      // Forced, never budget-gated — same treatment as the guard above: this
+      // is what makes the personal/professional agents honor the same
+      // language-selection rules as the "direct" route (see the constant's
+      // own doc comment for why call sites previously drifted apart).
+      { role: 'system', content: LANGUAGE_POLICY_INSTRUCTION },
     ];
-    let usedChars = params.systemPrompt.length + UNTRUSTED_CONTENT_GUARD.length;
+    let usedChars = params.systemPrompt.length + UNTRUSTED_CONTENT_GUARD.length + LANGUAGE_POLICY_INSTRUCTION.length;
 
     const pushIfBudgetAllows = (content: string): boolean => {
       if (usedChars + content.length > this.budgetChars) return false;

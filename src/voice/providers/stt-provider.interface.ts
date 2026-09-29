@@ -15,6 +15,15 @@ export interface SttSession {
   finalize(): Promise<string>;
   /** Abort without producing a transcript (used on interruption). */
   abort(): void;
+  /**
+   * Best-effort language the provider itself detected/used for the transcript
+   * returned by the last `finalize()` call — undefined if the provider
+   * doesn't expose one, or none has been produced yet. Optional and additive
+   * (existing providers/mocks need no change): a secondary signal only, never
+   * authoritative — see `buildSttLanguageSignalNote` in
+   * `src/common/language/language-policy-prompt.ts`.
+   */
+  getLastDetectedLanguage?(): string | undefined;
 }
 
 export interface SpeechToTextProviderInterface {

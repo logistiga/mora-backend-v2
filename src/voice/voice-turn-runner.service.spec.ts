@@ -205,6 +205,30 @@ describe('VoiceTurnRunnerService — confirmation resolution (Phase G real-mic b
     expect(orchestrator.handleMessage).toHaveBeenCalledTimes(1);
   });
 
+  describe('STT-detected-language signal (language-selection-policy fix, requirement 8)', () => {
+    it('forwards a detected language as a labelled, non-authoritative note in externalContextNotes', async () => {
+      const { runner, orchestrator } = makeRunner();
+      const state = makeState();
+
+      await runner.run(state, 'turn-1', state.generationId, 'Salam', {}, makeEvents(), 'ar');
+
+      const call = orchestrator.handleMessage.mock.calls[0][0];
+      expect(call.externalContextNotes).toHaveLength(1);
+      expect(call.externalContextNotes[0]).toContain('ar');
+      expect(call.externalContextNotes[0]).toMatch(/secondaire/i);
+    });
+
+    it('omits externalContextNotes entirely when no language was detected (never sends an empty/noise note)', async () => {
+      const { runner, orchestrator } = makeRunner();
+      const state = makeState();
+
+      await runner.run(state, 'turn-1', state.generationId, 'Salam', {}, makeEvents());
+
+      const call = orchestrator.handleMessage.mock.calls[0][0];
+      expect(call.externalContextNotes).toBeUndefined();
+    });
+  });
+
   it('an ambiguous/unrelated transcript (real STT mistranscription) never touches a pending action', async () => {
     const { runner, pendingActionService, orchestrator } = makeRunner();
     const state = makeState({ openPendingActionIds: new Set(['pa-1']) });

@@ -93,6 +93,19 @@ describe('ContextBuilderService', () => {
     expect(result.messages.some((m) => m.content.includes('concise'))).toBe(true);
   });
 
+  it('always injects the shared, generic language-selection policy right after the untrusted-content guard (language-selection-policy fix)', async () => {
+    // Regression guard: previously only the "direct" route's ad hoc prompt
+    // told the model to prioritize the current message's language — the
+    // personal/professional agents (which this service serves) had no such
+    // instruction, so a conversation that had already gained an active
+    // personal/professional scope silently lost the language guarantee.
+    // Forced (like the untrusted-content guard), never budget-gated, so it
+    // can never be silently dropped for a large context.
+    const result = await ctx.service.build(baseParams);
+    expect(result.messages[2].role).toBe('system');
+    expect(result.messages[2].content).toContain('Politique de langue');
+  });
+
   it('includes the Essential User Profile as its own system note (learning-core), fetched independently of scope-specific facts', async () => {
     ctx.profileFactsServiceMock.getEssential.mockResolvedValue([
       { key: 'language_behavior', value: "Répond dans la langue utilisée par l'utilisateur" },

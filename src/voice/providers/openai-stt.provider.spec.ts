@@ -28,7 +28,7 @@ describe('OpenAiSttProvider — language hint + session isolation (Phase G §E/�
       'fetch',
       vi.fn(async (_url: string, init: RequestInit) => {
         capturedForms.push(init.body as FormData);
-        return new Response(JSON.stringify({ text: 'ok' }), { status: 200 });
+        return new Response(JSON.stringify({ text: 'ok', language: 'french' }), { status: 200 });
       }),
     );
   });
@@ -97,5 +97,47 @@ describe('OpenAiSttProvider — language hint + session isolation (Phase G §E/�
 
     expect(transcript).toBe('');
     expect(capturedForms.length).toBe(0); // never even called the network
+  });
+
+  describe('detected-language signal (language-selection-policy fix)', () => {
+    it('requests verbose_json so Whisper returns its own detected language', async () => {
+      const provider = new OpenAiSttProvider(connection, callLogger as any, 'user-1');
+      const session = provider.startSession({ language: 'auto' });
+      session.pushAudio(frame());
+      await session.finalize();
+
+      expect(capturedForms[0].get('response_format')).toBe('verbose_json');
+    });
+
+    it('maps a Whisper language NAME ("french") to the short internal code ("fr") via getLastDetectedLanguage()', async () => {
+      const provider = new OpenAiSttProvider(connection, callLogger as any, 'user-1');
+      const session = provider.startSession({ language: 'auto' });
+      session.pushAudio(frame());
+      await session.finalize();
+
+      expect(session.getLastDetectedLanguage?.()).toBe('fr');
+    });
+
+    it('passes through an unrecognized language name raw rather than dropping it (still a useful, non-authoritative signal)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init: RequestInit) => {
+          capturedForms.push(init.body as FormData);
+          return new Response(JSON.stringify({ text: 'ok', language: 'spanish' }), { status: 200 });
+        }),
+      );
+      const provider = new OpenAiSttProvider(connection, callLogger as any, 'user-1');
+      const session = provider.startSession({ language: 'auto' });
+      session.pushAudio(frame());
+      await session.finalize();
+
+      expect(session.getLastDetectedLanguage?.()).toBe('spanish');
+    });
+
+    it('getLastDetectedLanguage() is undefined before any finalize() has succeeded', async () => {
+      const provider = new OpenAiSttProvider(connection, callLogger as any, 'user-1');
+      const session = provider.startSession({ language: 'auto' });
+      expect(session.getLastDetectedLanguage?.()).toBeUndefined();
+    });
   });
 });

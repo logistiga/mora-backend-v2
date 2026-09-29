@@ -12,6 +12,7 @@ import { ConversationSummaryService } from '../memory/conversation-summary.servi
 import { MemoryQueueService } from '../memory/queue/memory-queue.service.js';
 import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import { detectScriptLanguage } from '../common/language/script-language.util.js';
+import { LANGUAGE_POLICY_INSTRUCTION } from '../common/language/language-policy-prompt.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
 import type { RouterDecisionResult } from '../router/router.types.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
@@ -180,7 +181,7 @@ export class MoraOrchestratorService {
     externalContextNotes: string[],
   ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
     if (decision.route === 'direct') {
-      return this.handleDirect(user, message, decision);
+      return this.handleDirect(user, message, decision, externalContextNotes);
     }
 
     if (decision.route === 'hybrid') {
@@ -402,6 +403,7 @@ export class MoraOrchestratorService {
     user: AgentUser,
     message: string,
     decision: RouterDecisionResult,
+    externalContextNotes: string[] = [],
   ): Promise<{ content: string; metadata: Record<string, unknown> }> {
     const essentialFacts = await this.profileFactsService.getEssential(user.id);
     const essentialFactsText =
@@ -410,6 +412,7 @@ export class MoraOrchestratorService {
           'salutation) :\n' +
           essentialFacts.map((f) => `- ${f.key}: ${f.value}`).join('\n')
         : '';
+    const notesText = externalContextNotes.length > 0 ? `\n\n${externalContextNotes.join('\n')}` : '';
 
     const response = await this.llmService.complete(
       {
@@ -418,15 +421,15 @@ export class MoraOrchestratorService {
             role: 'system',
             content:
               `Tu es Mora, l'assistant de ${user.displayName}. ` +
-              'Réponds directement et de façon concise au message ci-dessous. ' +
-              "Détecte la langue et le registre du message de l'utilisateur et réponds dans cette même langue, " +
-              "sauf si une préférence essentielle ci-dessous dit explicitement le contraire (ex: \"réponds " +
-              'toujours en français"). ' +
+              'Réponds directement et de façon concise au message ci-dessous.\n\n' +
+              LANGUAGE_POLICY_INSTRUCTION +
+              '\n\n' +
               "Tu n'as ici accès ni aux données personnelles ni aux données professionnelles de l'utilisateur : " +
               "réponds uniquement sur des connaissances générales et les préférences essentielles ci-dessous. " +
               "Si la demande nécessite réellement ses données personnelles ou professionnelles, dis-le " +
               'simplement et demande la précision utile — sans jamais inventer de contenu le concernant.' +
-              essentialFactsText,
+              essentialFactsText +
+              notesText,
           },
           { role: 'user', content: message },
         ],

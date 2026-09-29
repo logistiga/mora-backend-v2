@@ -10,6 +10,7 @@ import { VoiceProfileService } from './voice-profile.service.js';
 import { VoiceTurnService } from './voice-turn.service.js';
 import { splitIntoSentenceChunks } from './tts/sentence-buffer.util.js';
 import { voiceDebug } from './voice-debug-log.util.js';
+import { buildSttLanguageSignalNote } from '../common/language/language-policy-prompt.js';
 import type { VoiceRuntimeState } from './voice-runtime.registry.js';
 import type { VoiceTurnLatency } from './voice.types.js';
 
@@ -65,6 +66,7 @@ export class VoiceTurnRunnerService {
     transcript: string,
     latencySoFar: VoiceTurnLatency,
     events: VoiceTurnEvents,
+    sttDetectedLanguage?: string,
   ): Promise<void> {
     const turnStarted = Date.now();
     const isStale = () => state.generationId !== generationId;
@@ -127,6 +129,8 @@ export class VoiceTurnRunnerService {
     const fullUser = await this.usersService.findById(state.userId);
     const llmStarted = Date.now();
 
+    const sttLanguageNote = buildSttLanguageSignalNote(sttDetectedLanguage);
+
     let result;
     try {
       result = await this.orchestrator.handleMessage({
@@ -135,6 +139,7 @@ export class VoiceTurnRunnerService {
         conversationId: state.conversationId,
         channel: 'voice',
         recentInterruption,
+        externalContextNotes: sttLanguageNote ? [sttLanguageNote] : undefined,
       });
     } catch (error) {
       this.logger.error(`Orchestrator call failed for voice turn ${turnId}: ${String(error)}`);

@@ -120,6 +120,7 @@ describe('VoiceGateway — stale STT finalize guard (Phase F barge-in regression
       'fresh transcript',
       expect.objectContaining({ sttLatencyMs: expect.any(Number) }),
       expect.any(Object),
+      undefined, // no getLastDetectedLanguage() on this test's plain STT session mock
     );
 
     const transcriptEvents = socket.send.mock.calls

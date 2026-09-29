@@ -33,6 +33,7 @@ export class OpenAiSttProvider implements SpeechToTextProviderInterface {
   startSession(params: { language: string }): SttSession {
     const frames: Buffer[] = [];
     let aborted = false;
+    let lastDetectedLanguage: string | undefined;
 
     return {
       pushAudio: (frame: Buffer) => {
@@ -52,6 +53,12 @@ export class OpenAiSttProvider implements SpeechToTextProviderInterface {
           if (params.language && params.language !== 'auto') {
             form.append('language', mapLanguageCode(params.language));
           }
+          // verbose_json also returns the language Whisper itself detected/used
+          // (independent of the `language` hint above) — captured as a
+          // best-effort secondary signal for the language-selection policy
+          // (see src/common/language/language-policy-prompt.ts), never as the
+          // authoritative source of truth. `text` is unaffected by this format.
+          form.append('response_format', 'verbose_json');
 
           const headers: Record<string, string> = {};
           if (this.connection.apiKey) headers.Authorization = `Bearer ${this.connection.apiKey}`;
@@ -79,7 +86,8 @@ export class OpenAiSttProvider implements SpeechToTextProviderInterface {
             return '';
           }
 
-          const data = (await response.json()) as { text?: string };
+          const data = (await response.json()) as { text?: string; language?: string };
+          lastDetectedLanguage = mapWhisperDetectedLanguage(data.language);
           await this.callLogger.log({
             userId: this.userId,
             providerId: this.connection.providerRowId,
@@ -107,8 +115,28 @@ export class OpenAiSttProvider implements SpeechToTextProviderInterface {
         aborted = true;
         frames.length = 0;
       },
+      getLastDetectedLanguage: () => lastDetectedLanguage,
     };
   }
+}
+
+// Whisper's verbose_json `language` field is a full lowercase English
+// language name (e.g. "french", "arabic"), not an ISO code. Mapped to the
+// short codes used elsewhere in this codebase (SUPPORTED_VOICE_LANGUAGES);
+// an unrecognized name is still returned raw rather than dropped — it is
+// only ever used as a best-effort, non-authoritative signal, so an unmapped
+// value is harmless and still informative to the LLM.
+const WHISPER_LANGUAGE_NAME_MAP: Record<string, string> = {
+  french: 'fr',
+  arabic: 'ar',
+  english: 'en',
+};
+
+function mapWhisperDetectedLanguage(language: string | undefined): string | undefined {
+  if (!language) return undefined;
+  const normalized = language.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return WHISPER_LANGUAGE_NAME_MAP[normalized] ?? normalized;
 }
 
 function mapLanguageCode(language: string): string {

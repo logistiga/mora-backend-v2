@@ -321,6 +321,53 @@ describe('Learning core / Essential User Profile (e2e)', () => {
     expect(rawRow).toBeNull();
   });
 
+  // Language-selection-policy fix regression guard: the REAL reported bug
+  // (real staging voice test, post-learning-core) was that a bare "Salam"
+  // worked reliably (handleDirect has its own language instruction) but
+  // ordinary Arabic sentences later in the SAME conversation sometimes came
+  // back in French — because once a conversation gains an active
+  // personal/professional scope, applyConversationContinuity reroutes every
+  // later non-greeting turn there, and the personal/professional agent path
+  // (ContextBuilderService) had no language instruction at all. This test
+  // reproduces that exact shape end-to-end (real HTTP, real router, real
+  // ContextBuilder) and asserts the fix: the personal-route system prompt now
+  // also carries the shared language policy.
+  it('a later non-greeting turn in a conversation that already has an active personal scope still carries the language policy (language-selection-policy fix)', async () => {
+    scripted.calls = [];
+    scripted.nextDirectReply = "D'accord.";
+
+    const first = await request(app.getHttpServer())
+      .post('/api/v1/messages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ message: 'Mon rendez-vous personnel est prévu demain matin' });
+    expect(first.status).toBe(201);
+    expect(first.body.route).toBe('personal');
+    const conversationId = first.body.conversationId;
+
+    scripted.calls = [];
+    const second = await request(app.getHttpServer())
+      .post('/api/v1/messages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        conversationId,
+        // Short (<=3 words) and not a recognized greeting, so the router's
+        // OWN deterministic rules alone (no LLM call at all) classify this as
+        // 'direct' with intent 'information' — the exact shape that makes
+        // MoraOrchestratorService.applyConversationContinuity reroute it into
+        // the conversation's already-active personal scope instead.
+        message: 'نعم بالتأكيد',
+      });
+    expect(second.status).toBe(201);
+    // Continuity keeps it on the already-active personal scope, NOT direct —
+    // this is what makes the language-instruction gap matter in the first
+    // place (handleDirect alone would never have been enough).
+    expect(second.body.route).toBe('personal');
+
+    const personalCall = scripted.calls.at(-1);
+    const systemMessages = personalCall?.messages.filter((m) => m.role === 'system').map((m) => m.content) ?? [];
+    expect(systemMessages.some((content) => content.includes('Politique de langue'))).toBe(true);
+  });
+
   it('essential profile-facts endpoints require auth', async () => {
     const res = await request(app.getHttpServer()).get(`/api/v1/profile-facts?scope=${ESSENTIAL_SCOPE}`);
     expect(res.status).toBe(401);
