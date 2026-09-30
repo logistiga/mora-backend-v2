@@ -254,4 +254,19 @@ describe('MoraRouterService', () => {
       expect(result.intent).not.toBe('greeting');
     });
   });
+
+  describe('Latin-transliterated Arabic/Darija greeting recognition (short-turn tie-break fix)', () => {
+    // The real reported bug used "Salaam" (double-a) — GREETING_PATTERN only
+    // had "salam" — so this exact spelling variant fell through to a
+    // generic 'information' intent instead of 'greeting', same class of gap
+    // as the Arabic-script case above.
+    it.each(['Salaam', 'Chokran', 'Choukran', 'Labas', 'Inshallah', 'Marhba', 'Marhaba'])(
+      'classifies the transliterated greeting/thanks "%s" as direct with intent=greeting',
+      async (text) => {
+        const result = await service.classify(text);
+        expect(result.route).toBe('direct');
+        expect(result.intent).toBe('greeting');
+      },
+    );
+  });
 });

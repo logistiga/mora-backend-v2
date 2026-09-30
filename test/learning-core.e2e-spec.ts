@@ -368,6 +368,32 @@ describe('Learning core / Essential User Profile (e2e)', () => {
     expect(systemMessages.some((content) => content.includes('Politique de langue'))).toBe(true);
   });
 
+  // Short-turn tie-break fix regression guard: the REAL reported bug (real
+  // staging voice test, post-language-selection-policy) was "Salaam" (a
+  // short transliterated Arabic/Darija greeting, Latin script) producing a
+  // MIXED-language reply ("Wa alaykum as-salam ! Comment puis-je t'aider
+  // aujourd'hui ?") even with a taught "answer in the language I use"
+  // preference in place. This asserts the real HTTP → direct-route prompt
+  // now carries both the weak lexical tie-break signal for this short turn
+  // AND the anti-mixing rule, real end-to-end (not just unit-level).
+  it('a short transliterated greeting on the direct route carries the short-turn lexical signal (short-turn tie-break fix)', async () => {
+    scripted.calls = [];
+    scripted.nextDirectReply = 'مرحباً! كيف حالك؟';
+
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/messages')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ message: 'Salaam' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.route).toBe('direct');
+
+    const directCall = scripted.calls.at(-1);
+    const system = directCall?.messages.find((m) => m.role === 'system')?.content ?? '';
+    expect(system).toContain('Signal lexical faible');
+    expect(system).toMatch(/ne mélange jamais/i);
+  });
+
   it('essential profile-facts endpoints require auth', async () => {
     const res = await request(app.getHttpServer()).get(`/api/v1/profile-facts?scope=${ESSENTIAL_SCOPE}`);
     expect(res.status).toBe(401);

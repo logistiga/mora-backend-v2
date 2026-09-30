@@ -11,6 +11,13 @@ describe('detectScriptLanguage', () => {
     expect(detectScriptLanguage('Salam, comment ça va ?')).toBe('ar');
   });
 
+  it.each(['Salaam', 'Chokran', 'Labas', 'Inshallah', 'Marhba', 'Marhaban'])(
+    'detects the common Latin-transliterated Arabic/Darija expression "%s" (short-turn tie-break fix)',
+    (word) => {
+      expect(detectScriptLanguage(word)).toBe('ar');
+    },
+  );
+
   it('detects Latin-script Darija via digit-substituted phonemes', () => {
     expect(detectScriptLanguage('kifach 3andek lyoum')).toBe('darija');
   });

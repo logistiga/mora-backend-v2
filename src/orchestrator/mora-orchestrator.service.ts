@@ -12,7 +12,7 @@ import { ConversationSummaryService } from '../memory/conversation-summary.servi
 import { MemoryQueueService } from '../memory/queue/memory-queue.service.js';
 import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import { detectScriptLanguage } from '../common/language/script-language.util.js';
-import { LANGUAGE_POLICY_INSTRUCTION } from '../common/language/language-policy-prompt.js';
+import { LANGUAGE_POLICY_INSTRUCTION, buildShortTurnLexicalSignalNote } from '../common/language/language-policy-prompt.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
 import type { RouterDecisionResult } from '../router/router.types.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
@@ -412,7 +412,9 @@ export class MoraOrchestratorService {
           'salutation) :\n' +
           essentialFacts.map((f) => `- ${f.key}: ${f.value}`).join('\n')
         : '';
-    const notesText = externalContextNotes.length > 0 ? `\n\n${externalContextNotes.join('\n')}` : '';
+    const shortTurnSignal = buildShortTurnLexicalSignalNote(message);
+    const allNotes = shortTurnSignal ? [...externalContextNotes, shortTurnSignal] : externalContextNotes;
+    const notesText = allNotes.length > 0 ? `\n\n${allNotes.join('\n')}` : '';
 
     const response = await this.llmService.complete(
       {

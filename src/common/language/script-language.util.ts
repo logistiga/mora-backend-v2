@@ -24,7 +24,8 @@ const DARIJA_LATIN_DIGITS = /[a-z](?=[3579])|[3579](?=[a-z])/i;
 // and courtesy words — the same kind of generic, widely-known vocabulary
 // GREETING_PATTERN (mora-router.service.ts) already recognizes across
 // several languages (bonjour/hello/salam/...), not anything user-specific.
-const ARABIC_LATIN_GREETING_WORDS = /\b(salam|salaam|assalamu|slm|marhaba|marhaban|ahlan|labas|chokran|choukran)\b/i;
+const ARABIC_LATIN_GREETING_WORDS =
+  /\b(salam|salaam|assalamu|slm|marhaba|marhaban|marhba|ahlan|labas|chokran|choukran|inshallah|inchallah)\b/i;
 const FRENCH_STOPWORDS = /\b(le|la|les|je|tu|nous|vous|bonjour|merci|salut|et|est|pas|avec|pour)\b/i;
 const ENGLISH_STOPWORDS = /\b(the|hello|thanks|you|and|is|are|with|for|please)\b/i;
 

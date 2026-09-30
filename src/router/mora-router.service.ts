@@ -27,7 +27,8 @@ const PROFESSIONAL_SPACE_PATTERNS: Array<{ space: ProfessionalSpace; pattern: Re
 const PROFESSIONAL_GENERAL_PATTERN =
   /\b(travail|entreprise|client|facture|devis|r[ée]union|projet|coll[èe]gue|patron|contrat|budget|rapport)\b/i;
 
-const GREETING_PATTERN = /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|salam|ok|d'accord)\b/i;
+const GREETING_PATTERN =
+  /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|salam|salaam|marhba|marhaba|chokran|choukran|labas|inshallah|inchallah|ok|d'accord)\b/i;
 // Arabic-script greetings/thanks (Standard Arabic and Darija use the same
 // script). `\b` word boundaries don't work reliably on non-Latin scripts in a
 // non-unicode-aware regex (JS's default \w is ASCII-only), so this is

@@ -7,7 +7,7 @@ import { MemoryRetrievalService } from '../memory/memory-retrieval.service.js';
 import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import type { LlmMessage } from '../llm/llm-provider.interface.js';
 import type { RetrievedMemory } from '../memory/memory.types.js';
-import { LANGUAGE_POLICY_INSTRUCTION } from '../common/language/language-policy-prompt.js';
+import { LANGUAGE_POLICY_INSTRUCTION, buildShortTurnLexicalSignalNote } from '../common/language/language-policy-prompt.js';
 
 /**
  * Prompt-injection defense (AGENTS Phase E §48/§49): documents, emails,
@@ -129,6 +129,12 @@ export class ContextBuilderService {
         essentialFacts.map((f) => `- ${f.key}: ${f.value}`).join('\n');
       pushIfBudgetAllows(essentialText);
     }
+
+    // Short/ambiguous-turn tie-breaker (see LANGUAGE_POLICY_INSTRUCTION rule
+    // 3(a)): a weak, clearly-labelled lexical signal for the CURRENT message
+    // only — never authoritative, never budget-starved out given how small it is.
+    const shortTurnSignal = buildShortTurnLexicalSignalNote(params.latestUserMessage);
+    if (shortTurnSignal) pushIfBudgetAllows(shortTurnSignal);
 
     if (profileFacts.length > 0) {
       const factsText =
