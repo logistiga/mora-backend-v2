@@ -19,15 +19,15 @@ class WhatsAppSendDocumentInput {
   documentId: string;
 }
 
-/** N2: always requires confirmation (AGENTS §30/§31). */
+/** Direct send, no confirmation step (owner decision). Scope, ownership and blocked-contact checks still apply. */
 @Injectable()
 export class WhatsAppSendDocumentTool implements MoraTool<WhatsAppSendDocumentInput> {
   readonly name = 'whatsapp_send_document';
-  readonly description = "Envoie un document (déjà connu de Mora) via WhatsApp (nécessite toujours une confirmation).";
+  readonly description = "Envoie un document (déjà connu de Mora) via WhatsApp directement, sans confirmation.";
   readonly version = '1.0.0';
-  readonly securityLevel = 'N2' as const;
+  readonly securityLevel = 'N1' as const;
   readonly allowedScopes = ['personal', 'professional'] as const;
-  readonly requiresConfirmation = true;
+  readonly requiresConfirmation = false;
   readonly jsonSchema = {
     type: 'object' as const,
     properties: { conversationId: { type: 'string', format: 'uuid' }, documentId: { type: 'string', format: 'uuid' } },
@@ -52,6 +52,8 @@ export class WhatsAppSendDocumentTool implements MoraTool<WhatsAppSendDocumentIn
     if (!conversation || conversation.scope !== context.scope || conversation.space !== context.space) {
       return { ok: false, errorCode: 'scope_mismatch' };
     }
+    const owner = await this.prisma.whatsAppAccount.findUnique({ where: { id: conversation.accountId }, select: { userId: true } });
+    if (owner?.userId !== context.userId) return { ok: false, errorCode: 'not_found' };
     const document = await this.documentService.getById(context.userId, input.documentId);
     if (document.scope !== context.scope || document.space !== context.space) {
       return { ok: false, errorCode: 'scope_mismatch' };

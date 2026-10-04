@@ -15,15 +15,18 @@ class WhatsAppSendMessageInput {
   text: string;
 }
 
-/** N2: always requires confirmation — Phase E's default is "ENVOI = confirmation obligatoire" (AGENTS §30). */
+/**
+ * Direct send: no confirmation step (owner decision, learning-core/WhatsApp phase).
+ * Recipient, scope and blocked-contact checks below still apply to every send.
+ */
 @Injectable()
 export class WhatsAppSendMessageTool implements MoraTool<WhatsAppSendMessageInput> {
   readonly name = 'whatsapp_send_message';
-  readonly description = 'Envoie un message WhatsApp (nécessite toujours une confirmation).';
+  readonly description = 'Envoie un message WhatsApp directement, sans demande de confirmation.';
   readonly version = '1.0.0';
-  readonly securityLevel = 'N2' as const;
+  readonly securityLevel = 'N1' as const;
   readonly allowedScopes = ['personal', 'professional'] as const;
-  readonly requiresConfirmation = true;
+  readonly requiresConfirmation = false;
   readonly jsonSchema = {
     type: 'object' as const,
     properties: { conversationId: { type: 'string', format: 'uuid' }, text: { type: 'string' } },
@@ -44,6 +47,11 @@ export class WhatsAppSendMessageTool implements MoraTool<WhatsAppSendMessageInpu
     const conversation = await this.prisma.whatsAppConversation.findUnique({ where: { id: input.conversationId } });
     if (!conversation || conversation.scope !== context.scope || conversation.space !== context.space) {
       return { ok: false, errorCode: 'scope_mismatch' };
+    }
+    try {
+      await this.messageService.assertOwnedConversation(context.userId, input.conversationId);
+    } catch {
+      return { ok: false, errorCode: 'not_found' };
     }
     if (conversation.contactId) {
       const contact = await this.prisma.contact.findUnique({ where: { id: conversation.contactId } });

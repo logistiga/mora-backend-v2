@@ -1,11 +1,12 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service.js';
 import { ContactService } from '../contacts/contact.service.js';
 import { PrismaService } from '../database/prisma.service.js';
-import type { WhatsAppMessage } from '../generated/prisma/client.js';
+import type { Prisma, WhatsAppMessage } from '../generated/prisma/client.js';
 import { WhatsAppAccountService } from './whatsapp-account.service.js';
 import type { WhatsAppProviderInterface } from './providers/whatsapp-provider.interface.js';
 import { WHATSAPP_PROVIDER } from './providers/whatsapp-provider.token.js';
+import { mapEvolutionStatus, shouldAdvance } from './whatsapp-status.util.js';
 
 export interface InboundWhatsAppMessage {
   accountId: string;
@@ -122,6 +123,7 @@ export class WhatsAppMessageService {
         contactId: conversation.contactId,
         timestamp: new Date(),
         text,
+        status: 'sent',
       },
     });
 
@@ -134,6 +136,62 @@ export class WhatsAppMessageService {
     });
 
     return message;
+  }
+
+  /** Ownership check for every user-facing path: a conversation is only ever reachable through an account the user owns. */
+  async assertOwnedConversation(userId: string, conversationId: string) {
+    const conversation = await this.prisma.whatsAppConversation.findUnique({
+      where: { id: conversationId },
+      include: { account: { select: { userId: true } } },
+    });
+    if (!conversation || conversation.account.userId !== userId) {
+      throw new NotFoundException('Conversation not found');
+    }
+    return conversation;
+  }
+
+  async sendTextForUser(userId: string, conversationId: string, text: string): Promise<WhatsAppMessage> {
+    await this.assertOwnedConversation(userId, conversationId);
+    return this.sendAndPersist(userId, conversationId, text);
+  }
+
+  async listMessagesForUser(
+    userId: string,
+    query: { limit?: number; offset?: number; status?: string; accountId?: string },
+  ) {
+    const where: Prisma.WhatsAppMessageWhereInput = {
+      conversation: { account: { userId, ...(query.accountId ? { id: query.accountId } : {}) } },
+      ...(query.status ? { status: query.status } : {}),
+    };
+    const limit = query.limit ?? 50;
+    const offset = query.offset ?? 0;
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.whatsAppMessage.findMany({ where, orderBy: { timestamp: 'desc' }, take: limit, skip: offset }),
+      this.prisma.whatsAppMessage.count({ where }),
+    ]);
+    return { items, total, limit, offset };
+  }
+
+  async getMessageForUser(userId: string, messageId: string) {
+    const message = await this.prisma.whatsAppMessage.findFirst({
+      where: { id: messageId, conversation: { account: { userId } } },
+    });
+    if (!message) throw new NotFoundException('Message not found');
+    return message;
+  }
+
+  /** Applies a delivery update from Evolution's webhook, only for a message of the account that received it. */
+  async applyDeliveryStatus(accountId: string, providerMessageId: string, providerStatus: unknown): Promise<boolean> {
+    const next = mapEvolutionStatus(providerStatus);
+    if (!next) return false;
+
+    const message = await this.prisma.whatsAppMessage.findFirst({
+      where: { providerMessageId, direction: 'outbound', conversation: { accountId } },
+    });
+    if (!message || !shouldAdvance(message.status, next)) return false;
+
+    await this.prisma.whatsAppMessage.update({ where: { id: message.id }, data: { status: next } });
+    return true;
   }
 
   async listConversations(accountIds: string[]) {

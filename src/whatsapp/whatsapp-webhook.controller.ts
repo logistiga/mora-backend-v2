@@ -46,6 +46,12 @@ export class WhatsAppWebhookController {
       return { received: true, processed: false };
     }
 
+    if (payload.event === 'messages.update') {
+      const keyId = typeof data.keyId === 'string' ? data.keyId : null;
+      const processed = keyId ? await this.messageService.applyDeliveryStatus(account.id, keyId, data.status) : false;
+      return { received: true, processed, kind: 'status' };
+    }
+
     const message = extractMessage(data);
     if (!message) {
       return { received: true, processed: false };
