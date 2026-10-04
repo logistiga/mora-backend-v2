@@ -59,6 +59,11 @@ export interface AppConfig {
    */
   allowPublicRegistration: boolean;
   encryptionKey?: string;
+  google: {
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+  };
   /**
    * Phase D: the IANA timezone used to phrase the "current time" reference
    * given to the LLM (see TimeContextService) when no real per-user
@@ -150,6 +155,11 @@ export default (): { app: AppConfig } => ({
     // provider's API key; SecretEncryptionService.validateEncryptionKey()
     // throws a clear error at that point instead.
     encryptionKey: process.env.MORA_ENCRYPTION_KEY || undefined,
+    google: {
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || undefined,
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || undefined,
+      redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI || undefined,
+    },
     // No per-user timezone stored today (User has no `timezone` field) — UTC
     // is the explicit, documented default rather than a silent choice left
     // to the model. Configurable per deployment via MORA_DEFAULT_TIMEZONE.

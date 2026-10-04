@@ -3,6 +3,8 @@ export interface SkillDefinition {
   readonly label: string;
   readonly description: string;
   readonly toolNames: readonly string[];
+  /** Allowed values per config key. Anything else is rejected, so config can never carry free-form data. */
+  readonly configOptions?: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -79,6 +81,7 @@ export const SKILL_CATALOG: readonly SkillDefinition[] = [
     key: 'calendar',
     label: 'Agenda',
     description: 'Consulter, créer, modifier et annuler des événements.',
+    configOptions: { provider: ['mora', 'google'] },
     toolNames: [
       'calendar_list_events',
       'calendar_get_event',

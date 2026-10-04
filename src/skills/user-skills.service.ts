@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { SKILL_CATALOG, findSkillDefinition, skillKeyForTool, type SkillDefinition } from './skill-catalog.js';
 
@@ -8,6 +9,7 @@ export interface UserSkillView {
   description: string;
   enabled: boolean;
   toolNames: readonly string[];
+  config?: Record<string, string>;
 }
 
 /**
@@ -21,8 +23,14 @@ export class UserSkillsService {
 
   async listForUser(userId: string): Promise<UserSkillView[]> {
     const rows = await this.prisma.userSkill.findMany({ where: { userId } });
-    const enabledByKey = new Map(rows.map((row) => [row.skillKey, row.enabled]));
-    return SKILL_CATALOG.map((skill) => this.toView(skill, enabledByKey.get(skill.key) ?? true));
+    const byKey = new Map(rows.map((row) => [row.skillKey, row]));
+    return SKILL_CATALOG.map((skill) => {
+      const row = byKey.get(skill.key);
+      const stored = Object.fromEntries(
+        Object.entries((row?.config ?? {}) as Record<string, unknown>).filter(([, v]) => typeof v === 'string'),
+      ) as Record<string, string>;
+      return { ...this.toView(skill, row?.enabled ?? true), config: { ...this.defaultConfig(skill.key), ...stored } };
+    });
   }
 
   async setEnabled(userId: string, key: string, enabled: boolean): Promise<UserSkillView> {
@@ -54,6 +62,35 @@ export class UserSkillsService {
     return disabled;
   }
 
+  async getConfig(userId: string, key: string): Promise<Record<string, string>> {
+    const row = await this.prisma.userSkill.findUnique({
+      where: { userId_skillKey: { userId, skillKey: key } },
+      select: { config: true },
+    });
+    const stored = (row?.config ?? {}) as Record<string, unknown>;
+    const defaults = this.defaultConfig(key);
+    return { ...defaults, ...(Object.fromEntries(Object.entries(stored).filter(([, v]) => typeof v === 'string')) as Record<string, string>) };
+  }
+
+  async setConfig(userId: string, key: string, config: Record<string, unknown>): Promise<Record<string, string>> {
+    const skill = findSkillDefinition(key);
+    if (!skill) throw new NotFoundException(`Unknown skill "${key}"`);
+    const options = skill.configOptions ?? {};
+    for (const [name, value] of Object.entries(config)) {
+      const allowed = options[name];
+      if (!allowed || typeof value !== 'string' || !allowed.includes(value)) {
+        throw new BadRequestException(`Invalid config "${name}" for skill "${key}"`);
+      }
+    }
+    const merged: Record<string, string> = { ...(await this.getConfig(userId, key)), ...(config as Record<string, string>) };
+    await this.prisma.userSkill.upsert({
+      where: { userId_skillKey: { userId, skillKey: key } },
+      create: { userId, skillKey: key, enabled: true, config: merged as Prisma.InputJsonValue },
+      update: { config: merged as Prisma.InputJsonValue },
+    });
+    return merged;
+  }
+
   /** Tools that belong to no skill are never gated; coverage is enforced by the catalog test. */
   async isToolEnabled(userId: string, toolName: string): Promise<boolean> {
     const skillKey = skillKeyForTool(toolName);
@@ -63,6 +100,11 @@ export class UserSkillsService {
       select: { enabled: true },
     });
     return row?.enabled ?? true;
+  }
+
+  private defaultConfig(key: string): Record<string, string> {
+    if (key === 'calendar') return { provider: 'mora' };
+    return {};
   }
 
   private toView(skill: SkillDefinition, enabled: boolean): UserSkillView {

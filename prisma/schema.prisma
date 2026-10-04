@@ -61,6 +61,7 @@ model User {
   avatarProfile     AvatarProfile?
   bugReports        BugReport[]
   userSkills        UserSkill[]
+  googleAccount     GoogleAccount?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1331,5 +1332,23 @@ model UserSkill {
 
   @@unique([userId, skillKey])
   @@map("user_skills")
+}
+
+// Phase google-integration: one Google OAuth grant per user. The refresh token
+// is encrypted with the same AES-256-GCM service as provider secrets. Scopes
+// are the union granted so far, so Calendar, Gmail and Docs share one account.
+model GoogleAccount {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @unique @map("user_id") @db.Uuid
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  googleEmail         String    @map("google_email")
+  scopes              String[]
+  refreshTokenEncrypted String  @map("refresh_token_encrypted")
+  refreshTokenIv        String  @map("refresh_token_iv")
+  refreshTokenAuthTag   String  @map("refresh_token_auth_tag")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@map("google_accounts")
 }
 

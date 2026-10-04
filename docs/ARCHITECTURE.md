@@ -135,3 +135,20 @@ today's behaviour.
 - API: `GET /api/v1/skills`, `PATCH /api/v1/skills/:key` with body `{ "enabled": boolean }`.
   The body must be a real JSON boolean: the string `"false"` is rejected, because the
   app-wide ValidationPipe uses implicit conversion.
+
+## Google integration (Calendar)
+
+One Google OAuth grant per user, stored in `google_accounts` with the refresh token encrypted
+(AES-256-GCM, same service as provider secrets). Access tokens live in memory only.
+
+- `POST /api/v1/google/oauth/authorize` returns the consent URL. `GET /api/v1/google/oauth/callback`
+  is public by design: the HMAC-signed, 10-minute `state` binds it to the user who started it.
+- `GET /api/v1/google/status`, `DELETE /api/v1/google/account` (revokes at Google, then deletes).
+- The calendar backend is chosen per user by the `calendar` skill config: `provider` is `mora`
+  (default, internal) or `google`. Switching is explicit, so existing agenda data is never moved.
+- Google-created events from Mora carry `mora_scope` / `mora_space` as private properties, so
+  scope isolation holds on the way back. Events created directly in Google have no label and show
+  up in every listing of their user.
+- Configuration: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`.
+  Optional at boot; the authorize endpoint answers 503 until they are set.
+- Not yet built: Gmail and Google Docs on this same grant, and live validation against Google.

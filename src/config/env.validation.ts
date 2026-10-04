@@ -187,6 +187,20 @@ export class EnvironmentVariables {
   @IsString()
   MORA_ENCRYPTION_KEY?: string;
 
+  // Optional: Google OAuth client for Calendar/Gmail/Docs. Only required once a
+  // user connects a Google account; the app boots fine without them.
+  @IsOptional()
+  @IsString()
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+
+  @IsOptional()
+  @IsString()
+  GOOGLE_OAUTH_REDIRECT_URI?: string;
+
   // Optional: IANA timezone used to phrase the "current time" reference the
   // LLM is given for resolving relative date expressions (Phase D — see
   // TimeContextService). Defaults to 'UTC' when absent; documented,
