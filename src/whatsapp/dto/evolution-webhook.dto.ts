@@ -1,10 +1,11 @@
 import { IsObject, IsOptional, IsString } from 'class-validator';
 
 /**
- * Deliberately loose (Evolution API's webhook payload varies by event type)
- * — the controller extracts only the specific fields it understands
- * (AGENTS Phase E §27) and ignores/discards everything else rather than
- * trusting the payload shape blindly.
+ * Evolution API sends more top-level fields than just event and data
+ * (instance, sender, date_time, server_url, destination, apikey). The global
+ * ValidationPipe rejects unknown properties, so every field Evolution really
+ * sends must be declared here. Only event and data are used; the others are
+ * accepted and ignored, and `apikey` is never logged or stored.
  */
 export class EvolutionWebhookDto {
   @IsOptional()
@@ -14,4 +15,28 @@ export class EvolutionWebhookDto {
   @IsOptional()
   @IsObject()
   data?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsString()
+  instance?: string;
+
+  @IsOptional()
+  @IsString()
+  sender?: string;
+
+  @IsOptional()
+  @IsString()
+  date_time?: string;
+
+  @IsOptional()
+  @IsString()
+  server_url?: string;
+
+  @IsOptional()
+  @IsString()
+  destination?: string;
+
+  @IsOptional()
+  @IsString()
+  apikey?: string;
 }
