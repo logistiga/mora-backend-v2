@@ -78,6 +78,7 @@ export class EmailAccountService {
     }
     return {
       accountId: account.id,
+      userId: account.userId,
       provider: account.provider,
       address: account.address,
       imapHost: account.imapHost ?? undefined,

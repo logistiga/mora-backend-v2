@@ -152,3 +152,11 @@ One Google OAuth grant per user, stored in `google_accounts` with the refresh to
 - Configuration: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`.
   Optional at boot; the authorize endpoint answers 503 until they are set.
 - Not yet built: Gmail and Google Docs on this same grant, and live validation against Google.
+
+## Gmail
+
+A Gmail mailbox is an ordinary `email_accounts` row with `provider: 'gmail'`, created by
+`POST /api/v1/google/gmail/account` once a Google grant exists. It carries no credentials of
+its own: `EmailProviderRouter` sends it to `GoogleGmailEmailProvider`, which uses the user's
+Google token (`gmail.readonly` + `gmail.send`). Every other mailbox stays on IMAP/SMTP.
+Users connected before this change must reconnect once to grant the Gmail scopes.

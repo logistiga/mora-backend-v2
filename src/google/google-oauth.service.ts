@@ -13,6 +13,8 @@ const ACCESS_TOKEN_SAFETY_MS = 60 * 1000;
 
 export const GOOGLE_SCOPES = {
   calendar: 'https://www.googleapis.com/auth/calendar',
+  gmailRead: 'https://www.googleapis.com/auth/gmail.readonly',
+  gmailSend: 'https://www.googleapis.com/auth/gmail.send',
   email: 'openid email',
 } as const;
 
@@ -55,7 +57,7 @@ export class GoogleOAuthService {
       client_id: google.clientId!,
       redirect_uri: google.redirectUri!,
       response_type: 'code',
-      scope: [GOOGLE_SCOPES.calendar, GOOGLE_SCOPES.email].join(' '),
+      scope: [GOOGLE_SCOPES.calendar, GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.gmailSend, GOOGLE_SCOPES.email].join(' '),
       access_type: 'offline',
       prompt: 'consent',
       include_granted_scopes: 'true',

@@ -1,5 +1,6 @@
 export interface ResolvedEmailConnection {
   accountId: string;
+  userId?: string;
   provider: string;
   address: string;
   imapHost?: string;

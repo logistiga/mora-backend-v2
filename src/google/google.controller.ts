@@ -4,12 +4,16 @@ import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { GoogleCallbackQueryDto } from './dto/google-callback.dto.js';
+import { GoogleGmailAccountService } from './google-gmail-account.service.js';
 import { GoogleOAuthService } from './google-oauth.service.js';
 
 @ApiTags('google')
 @Controller('google')
 export class GoogleController {
-  constructor(private readonly oauth: GoogleOAuthService) {}
+  constructor(
+    private readonly oauth: GoogleOAuthService,
+    private readonly gmailAccounts: GoogleGmailAccountService,
+  ) {}
 
   @Get('status')
   @ApiBearerAuth()
@@ -29,6 +33,13 @@ export class GoogleController {
   @Get('oauth/callback')
   callback(@Query() query: GoogleCallbackQueryDto) {
     return this.oauth.handleCallback(query.code, query.state);
+  }
+
+  @Post('gmail/account')
+  @ApiBearerAuth()
+  @UseGuards(JwtAccessGuard)
+  connectGmail(@CurrentUser() user: AuthenticatedUser) {
+    return this.gmailAccounts.connectMailbox(user.id);
   }
 
   @Delete('account')

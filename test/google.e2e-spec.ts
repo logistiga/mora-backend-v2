@@ -78,6 +78,13 @@ describe('Google integration (e2e)', () => {
     expect(missing.status).toBe(400);
   });
 
+  it('refuses to create a Gmail mailbox before a Google account is connected', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/google/gmail/account')
+      .set('Authorization', `Bearer ${accessToken}`);
+    expect(res.status).toBe(400);
+  });
+
   it('disconnect is idempotent when nothing is connected', async () => {
     const res = await request(app.getHttpServer())
       .delete('/api/v1/google/account')

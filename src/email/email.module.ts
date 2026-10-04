@@ -7,12 +7,20 @@ import { EmailAccountService } from './email-account.service.js';
 import { EmailController } from './email.controller.js';
 import { EmailMessageService } from './email-message.service.js';
 import { ImapSmtpEmailProvider } from './providers/imap-smtp-email.provider.js';
+import { EmailProviderRouter } from './providers/email-provider.router.js';
 import { EMAIL_PROVIDER } from './providers/email-provider.token.js';
+import { GoogleModule } from '../google/google.module.js';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'jwt-access' }), AiProvidersModule, ContactsModule, AuditModule],
+  imports: [PassportModule.register({ defaultStrategy: 'jwt-access' }), AiProvidersModule, ContactsModule, AuditModule, GoogleModule],
   controllers: [EmailController],
-  providers: [{ provide: EMAIL_PROVIDER, useClass: ImapSmtpEmailProvider }, EmailAccountService, EmailMessageService],
+  providers: [
+    ImapSmtpEmailProvider,
+    EmailProviderRouter,
+    { provide: EMAIL_PROVIDER, useExisting: EmailProviderRouter },
+    EmailAccountService,
+    EmailMessageService,
+  ],
   exports: [EmailAccountService, EmailMessageService, EMAIL_PROVIDER],
 })
 export class EmailModule {}
