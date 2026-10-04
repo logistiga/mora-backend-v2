@@ -1,3 +1,4 @@
+import { SkillsModule } from '../skills/skills.module.js';
 import { Module } from '@nestjs/common';
 import { TimeModule } from '../common/time/time.module.js';
 import { ContextModule } from '../context/context.module.js';
@@ -7,7 +8,7 @@ import { PersonalAgentService } from './personal-agent.service.js';
 import { ProfessionalAgentService } from './professional-agent.service.js';
 
 @Module({
-  imports: [LlmModule, ContextModule, ToolsModule, TimeModule],
+  imports: [LlmModule, ContextModule, ToolsModule, TimeModule, SkillsModule],
   providers: [PersonalAgentService, ProfessionalAgentService],
   exports: [PersonalAgentService, ProfessionalAgentService],
 })

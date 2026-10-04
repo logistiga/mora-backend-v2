@@ -64,6 +64,7 @@ const REJECTION_MESSAGES: Record<string, string> = {
   unknown_tool: "Je ne dispose pas de cette action.",
   scope_not_allowed: "Cette action n'est pas disponible dans ce contexte.",
   security_level_n4_blocked: "Cette action est critique et ne peut jamais être exécutée automatiquement.",
+  skill_disabled: "Cette compétence est désactivée. Réactive-la dans tes paramètres pour que je puisse l'utiliser.",
 };
 
 @Injectable()

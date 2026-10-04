@@ -116,3 +116,22 @@ Every variable the app reads is declared and validated in `src/config/env.valida
 (`class-validator`-based). Startup fails fast — before the HTTP listener opens — if anything is
 missing, wrongly typed, or (for JWT secrets) too short. `.env.example` documents every key;
 `.env` itself is git-ignored.
+
+## Skills registry
+
+A **skill** is a named group of tools a user can switch on or off (Mémoire, Tâches,
+Rappels, WhatsApp, Email, Agenda, LogistiGA, Piston...). The catalog lives in code
+(`src/skills/skill-catalog.ts`); the table `user_skills` stores only deviations from the
+default. A missing row means **enabled**, so no backfill is needed and existing users keep
+today's behaviour.
+
+- Every registered tool must belong to exactly one skill. A tool that belongs to no skill
+  is never gated, and the e2e suite (`test/skills.e2e-spec.ts`) fails if a new tool is added
+  without a skill.
+- Enforcement happens in three places: the LLM never sees tools of a disabled skill
+  (`ToolRegistryService.toLlmToolDefinitions`), `ToolExecutorService.requestExecution`
+  rejects with `skill_disabled`, and `PendingActionService.approve` refuses to run a
+  confirmed action whose skill was disabled after it was proposed.
+- API: `GET /api/v1/skills`, `PATCH /api/v1/skills/:key` with body `{ "enabled": boolean }`.
+  The body must be a real JSON boolean: the string `"false"` is rejected, because the
+  app-wide ValidationPipe uses implicit conversion.

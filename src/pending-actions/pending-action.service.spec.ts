@@ -42,12 +42,14 @@ function buildService() {
     get: vi.fn(() => ({ name: 'create_task' })),
   };
   const auditMock = { log: vi.fn() };
+  const userSkillsMock = { isToolEnabled: vi.fn(async () => true) };
 
   const service = new PendingActionService(
     prismaMock as never,
     toolExecutorMock as never,
     toolRegistryMock as never,
     auditMock as never,
+    userSkillsMock as never,
   );
   return { service, prismaMock, toolExecutorMock, toolRegistryMock, auditMock };
 }

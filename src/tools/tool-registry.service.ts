@@ -41,8 +41,10 @@ export class ToolRegistryService {
   }
 
   /** Provider-neutral tool definitions for everything visible in this scope — fed to LlmService.complete(). */
-  toLlmToolDefinitions(scope: ToolScope): LlmToolDefinition[] {
-    return this.listAvailableFor(scope).map((tool) => ({
+  toLlmToolDefinitions(scope: ToolScope, excludedToolNames: ReadonlySet<string> = new Set()): LlmToolDefinition[] {
+    return this.listAvailableFor(scope)
+      .filter((tool) => !excludedToolNames.has(tool.name))
+      .map((tool) => ({
       name: tool.name,
       description: tool.description,
       parameters: tool.jsonSchema as unknown as Record<string, unknown>,

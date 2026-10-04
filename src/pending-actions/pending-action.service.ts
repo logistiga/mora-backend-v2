@@ -5,6 +5,7 @@ import type { PendingAction, Prisma } from '../generated/prisma/client.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
 import { ToolRegistryService } from '../tools/tool-registry.service.js';
 import type { ToolScope } from '../tools/tool.types.js';
+import { UserSkillsService } from '../skills/user-skills.service.js';
 
 const LIST_LIMIT = 100;
 
@@ -46,6 +47,7 @@ export class PendingActionService {
     private readonly toolExecutor: ToolExecutorService,
     private readonly toolRegistry: ToolRegistryService,
     private readonly audit: AuditService,
+    private readonly userSkills: UserSkillsService,
   ) {}
 
   async list(userId: string): Promise<PendingAction[]> {
@@ -118,6 +120,14 @@ export class PendingActionService {
         data: { status: 'failed' },
       });
       return { status: 'executed', pendingAction: failed, toolResultOk: false };
+    }
+
+    if (!(await this.userSkills.isToolEnabled(userId, tool.name))) {
+      const blocked = await this.prisma.pendingAction.update({
+        where: { id },
+        data: { status: 'failed' },
+      });
+      return { status: 'executed', pendingAction: blocked, toolResultOk: false };
     }
 
     const { result } = await this.toolExecutor.executeNow(tool, {

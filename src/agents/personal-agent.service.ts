@@ -3,6 +3,7 @@ import { TimeContextService } from '../common/time/time-context.service.js';
 import { ContextBuilderService } from '../context/context-builder.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { ToolRegistryService } from '../tools/tool-registry.service.js';
+import { UserSkillsService } from '../skills/user-skills.service.js';
 import { TOOL_USAGE_RULES } from './agent-prompts.js';
 import type { AgentInput, AgentResponse } from './agent.types.js';
 
@@ -25,6 +26,7 @@ export class PersonalAgentService {
     private readonly contextBuilder: ContextBuilderService,
     private readonly toolRegistry: ToolRegistryService,
     private readonly timeContext: TimeContextService,
+    private readonly userSkills: UserSkillsService,
   ) {}
 
   async handle(input: AgentInput): Promise<AgentResponse> {
@@ -40,8 +42,9 @@ export class PersonalAgentService {
       externalContextNotes: input.externalContextNotes,
     });
 
+    const disabledTools = await this.userSkills.disabledToolNames(input.user.id);
     const response = await this.llmService.complete(
-      { messages: context.messages, tools: this.toolRegistry.toLlmToolDefinitions('personal') },
+      { messages: context.messages, tools: this.toolRegistry.toLlmToolDefinitions('personal', disabledTools) },
       { userId: input.user.id, scope: 'personal', space: input.routerDecision.space, route: 'personal' },
     );
 

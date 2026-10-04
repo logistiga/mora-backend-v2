@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service.js';
 import { PrismaService } from '../database/prisma.service.js';
+import { UserSkillsService } from '../skills/user-skills.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PermissionService } from './permission.service.js';
 import { ToolRegistryService } from './tool-registry.service.js';
@@ -32,6 +33,7 @@ export class ToolExecutorService {
     private readonly permissions: PermissionService,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly userSkills: UserSkillsService,
   ) {}
 
   /**
@@ -76,6 +78,14 @@ export class ToolExecutorService {
         errorCode: permission.reason,
       });
       return { kind: 'rejected', reason: permission.reason ?? 'not_allowed' };
+    }
+
+    if (!(await this.userSkills.isToolEnabled(context.userId, tool.name))) {
+      await this.recordCall(context, tool, validation.value, {
+        status: 'rejected',
+        errorCode: 'skill_disabled',
+      });
+      return { kind: 'rejected', reason: 'skill_disabled' };
     }
 
     if (tool.securityLevel === 'N4') {

@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AuditModule } from '../audit/audit.module.js';
 import { BusinessConnectorsModule } from '../business-connectors/business-connectors.module.js';
 import { CalendarModule } from '../calendar/calendar.module.js';
+import { SkillsModule } from '../skills/skills.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
 import { DocumentsModule } from '../documents/documents.module.js';
 import { EmailModule } from '../email/email.module.js';
@@ -145,6 +146,7 @@ const ALL_TOOL_PROVIDERS = [...PHASE_D_TOOLS, ...PHASE_E_TOOLS];
     WhatsAppModule,
     EmailModule,
     BusinessConnectorsModule,
+    SkillsModule,
     LlmModule,
     PassportModule.register({ defaultStrategy: 'jwt-access' }),
   ],

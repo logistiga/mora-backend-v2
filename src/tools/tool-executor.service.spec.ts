@@ -33,7 +33,8 @@ function buildExecutor() {
   };
   const auditMock = { log: vi.fn() };
 
-  const executor = new ToolExecutorService(registry, permissions, prismaMock as never, auditMock as never);
+  const userSkillsMock = { isToolEnabled: vi.fn(async () => true) };
+  const executor = new ToolExecutorService(registry, permissions, prismaMock as never, auditMock as never, userSkillsMock as never);
   return { executor, registry, prismaMock, auditMock };
 }
 

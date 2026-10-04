@@ -21,6 +21,7 @@ function buildService(fixedNow = new Date('2026-09-23T09:00:00.000Z')) {
     ),
   };
   const toolRegistry = { toLlmToolDefinitions: vi.fn(() => []) };
+  const userSkills = { disabledToolNames: vi.fn(async () => new Set<string>()) };
   const clock = new ClockService();
   clock.now = () => fixedNow;
   const timeContext = new TimeContextService(clock, { get: () => 'UTC' } as never);
@@ -30,6 +31,7 @@ function buildService(fixedNow = new Date('2026-09-23T09:00:00.000Z')) {
     contextBuilder as never,
     toolRegistry as never,
     timeContext,
+    userSkills as never,
   );
   return { service, contextBuilder, llmService, toolRegistry };
 }

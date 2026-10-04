@@ -60,6 +60,7 @@ model User {
   voiceProfiles     VoiceProfile[]
   avatarProfile     AvatarProfile?
   bugReports        BugReport[]
+  userSkills        UserSkill[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1312,3 +1313,23 @@ model VisionAsset {
   @@index([checksum])
   @@map("vision_assets")
 }
+
+// Phase skills-registry: per-user on/off state for a code-defined skill
+// (src/skills/skill-catalog.ts). A missing row means "enabled" — the catalog
+// is the source of truth for what skills exist; this table only stores
+// deviations from the default, so adding a skill never needs a backfill.
+model UserSkill {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  skillKey  String   @map("skill_key")
+  enabled   Boolean  @default(true)
+  config    Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skillKey])
+  @@map("user_skills")
+}
+
