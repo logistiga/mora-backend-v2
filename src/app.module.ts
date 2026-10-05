@@ -1,3 +1,4 @@
+import { maskMcpKeyInUrl } from './common/http/mask-url.util.js';
 import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE, Reflector } from '@nestjs/core';
@@ -63,6 +64,16 @@ import { McpModule } from './mcp/mcp.module.js';
                 : undefined,
             autoLogging: env !== 'test',
             genReqId: (req, res) => assignRequestId(req, res),
+            serializers: {
+              req: (req: { id?: unknown; method?: string; url?: string; headers?: unknown; remoteAddress?: string; remotePort?: number }) => ({
+                id: req.id,
+                method: req.method,
+                url: maskMcpKeyInUrl(req.url),
+                headers: req.headers,
+                remoteAddress: req.remoteAddress,
+                remotePort: req.remotePort,
+              }),
+            },
             customProps: (req) => ({
               requestId: req.id,
               userId: (req as { user?: { id?: string } }).user?.id,

@@ -75,6 +75,21 @@ describe('Remote MCP endpoint (e2e)', () => {
     expect(res.body.result.content[0].text).toBe('[]');
   });
 
+  it('accepts the key as the URL path segment for header-less connectors', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/mcp/${key}`)
+      .send({ jsonrpc: '2.0', id: 9, method: 'tools/list' });
+    expect(res.status).toBe(200);
+    expect(res.body.result.tools).toHaveLength(4);
+  });
+
+  it('refuses a wrong key in the URL path', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/mcp/mora_not-a-real-key-000000000000')
+      .send({ jsonrpc: '2.0', id: 10, method: 'tools/list' });
+    expect(res.status).toBe(401);
+  });
+
   it('refuses a send without confirmation through the real endpoint', async () => {
     const res = await request(app.getHttpServer())
       .post('/api/v1/mcp')

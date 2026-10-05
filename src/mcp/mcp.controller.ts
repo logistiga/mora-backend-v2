@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -28,9 +28,9 @@ interface JsonRpcRequest {
 export class McpController {
   constructor(private readonly mcp: McpService) {}
 
-  @Post()
+  @Post([':key', ''])
   @HttpCode(HttpStatus.OK)
-  async handle(@CurrentUser() user: AuthenticatedUser, @Body() body: JsonRpcRequest, @Res({ passthrough: true }) res: Response) {
+  async handle(@CurrentUser() user: AuthenticatedUser, @Body() body: JsonRpcRequest, @Res({ passthrough: true }) res: Response, @Param('key') _key?: string) {
     const id = body?.id ?? null;
     const isNotification = body?.id === undefined;
 
