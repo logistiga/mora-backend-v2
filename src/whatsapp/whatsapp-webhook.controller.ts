@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
 import { EvolutionWebhookDto } from './dto/evolution-webhook.dto.js';
 import { WhatsAppMessageService } from './whatsapp-message.service.js';
-import { maskJid, summarizeEvolutionPayload } from './webhook-diagnostics.util.js';
+import { maskJid } from './webhook-diagnostics.util.js';
 
 const MAX_TEXT_LENGTH = 4000;
 
@@ -43,8 +43,6 @@ export class WhatsAppWebhookController {
 
     const account = await this.prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
     if (!account) throw new NotFoundException('Unknown WhatsApp account');
-
-    this.logger.log(JSON.stringify({ kind: 'webhook_received', accountId: account.id, summary: summarizeEvolutionPayload(payload) }));
 
     const data = payload.data;
     if (!data || typeof data !== 'object') {
