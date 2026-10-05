@@ -5,39 +5,21 @@
 //
 // Env:
 //   MORA_API_URL   default https://mora-v2-staging.logistiga.tech/api/v1
-//   MORA_EMAIL     account email
-//   MORA_PASSWORD  account password (or MORA_TOKEN for a ready access token)
+//   MORA_API_KEY   personal Mora API key (mora_…), sent as the X-Api-Key header
 
 const API = process.env.MORA_API_URL || 'https://mora-v2-staging.logistiga.tech/api/v1';
 const PROTOCOL = '2024-11-05';
 
-let cachedToken = null;
-let tokenExpiresAt = 0;
-
-async function getToken() {
-  if (process.env.MORA_TOKEN) return process.env.MORA_TOKEN;
-  if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
-  if (!process.env.MORA_EMAIL || !process.env.MORA_PASSWORD) {
-    throw new Error('MORA_EMAIL and MORA_PASSWORD (or MORA_TOKEN) must be set in the environment');
-  }
-  const res = await fetch(`${API}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: process.env.MORA_EMAIL, password: process.env.MORA_PASSWORD }),
-  });
-  if (!res.ok) throw new Error(`login failed: HTTP ${res.status}`);
-  const data = await res.json();
-  cachedToken = data.accessToken;
-  // Access tokens are short-lived: refresh well before the server expires them.
-  tokenExpiresAt = Date.now() + 10 * 60 * 1000;
-  return cachedToken;
+function apiKey() {
+  const key = process.env.MORA_API_KEY;
+  if (!key) throw new Error('MORA_API_KEY must be set in the environment');
+  return key;
 }
 
 async function mora(path, { method = 'GET', body } = {}) {
-  const token = await getToken();
   const res = await fetch(`${API}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { 'X-Api-Key': apiKey(), 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
