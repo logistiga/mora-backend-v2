@@ -42,6 +42,7 @@ import { UsersModule } from './users/users.module.js';
 import { VoiceModule } from './voice/voice.module.js';
 import { VisionModule } from './vision/vision.module.js';
 import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
+import { McpModule } from './mcp/mcp.module.js';
 
 @Module({
   imports: [
@@ -115,6 +116,7 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module.js';
     ContactsModule,
     CalendarModule,
     WhatsAppModule,
+    McpModule,
     EmailModule,
     BusinessConnectorsModule,
     ToolsModule,
