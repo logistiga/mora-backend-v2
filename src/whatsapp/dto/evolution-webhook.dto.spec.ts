@@ -29,8 +29,11 @@ describe('EvolutionWebhookDto (production ValidationPipe rules)', () => {
     expect(errors.join(' ')).toMatch(/surprise/);
   });
 
-  it('still rejects a payload whose data is not an object', async () => {
-    const errors = await validateProductionStyle({ event: 'messages.update', data: 'oops' });
-    expect(errors.length).toBeGreaterThan(0);
+  it('accepts a batch where data is an array of messages', async () => {
+    const errors = await validateProductionStyle({
+      event: 'messages.upsert',
+      data: [{ key: { id: 'A', remoteJid: '24162222111@s.whatsapp.net', fromMe: false } }],
+    });
+    expect(errors).toEqual([]);
   });
 });

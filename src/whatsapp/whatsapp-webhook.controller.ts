@@ -1,9 +1,10 @@
-import { BadRequestException, Body, Controller, Headers, NotFoundException, Param, Post, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Headers, Logger, NotFoundException, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
 import { EvolutionWebhookDto } from './dto/evolution-webhook.dto.js';
 import { WhatsAppMessageService } from './whatsapp-message.service.js';
+import { maskJid, summarizeEvolutionPayload } from './webhook-diagnostics.util.js';
 
 const MAX_TEXT_LENGTH = 4000;
 
@@ -21,6 +22,8 @@ const MAX_TEXT_LENGTH = 4000;
 @ApiTags('whatsapp-webhook')
 @Controller('webhooks/whatsapp')
 export class WhatsAppWebhookController {
+  private readonly logger = new Logger(WhatsAppWebhookController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly messageService: WhatsAppMessageService,
@@ -41,34 +44,72 @@ export class WhatsAppWebhookController {
     const account = await this.prisma.whatsAppAccount.findUnique({ where: { id: accountId } });
     if (!account) throw new NotFoundException('Unknown WhatsApp account');
 
+    this.logger.log(JSON.stringify({ kind: 'webhook_received', accountId: account.id, summary: summarizeEvolutionPayload(payload) }));
+
     const data = payload.data;
     if (!data || typeof data !== 'object') {
+      this.logger.warn(JSON.stringify({ kind: 'webhook_result', result: 'ignored', reason: 'no_data' }));
       return { received: true, processed: false };
     }
 
     if (payload.event === 'messages.update') {
-      const keyId = typeof data.keyId === 'string' ? data.keyId : null;
-      const processed = keyId ? await this.messageService.applyDeliveryStatus(account.id, keyId, data.status) : false;
+      const keyId = !Array.isArray(data) && typeof data.keyId === 'string' ? data.keyId : null;
+      const processed = keyId ? await this.messageService.applyDeliveryStatus(account.id, keyId, (data as Record<string, unknown>).status) : false;
+      this.logger.log(JSON.stringify({ kind: 'webhook_result', result: processed ? 'processed' : 'ignored', reason: processed ? undefined : 'status_not_applied' }));
       return { received: true, processed, kind: 'status' };
     }
 
-    const message = extractMessage(data);
+    // Evolution may deliver one message as an object or a batch as an array.
+    // An array used to fall through to "no key" and return 201 without storing anything.
+    const items: unknown[] = Array.isArray(data) ? data : [data];
+    let processed = false;
+    for (const item of items) {
+      const result = await this.handleInboundItem(account.id, account.userId, item);
+      processed = processed || result;
+    }
+    return { received: true, processed };
+  }
+
+  private async handleInboundItem(accountId: string, userId: string, item: unknown): Promise<boolean> {
+    if (!item || typeof item !== 'object') {
+      this.logger.warn(JSON.stringify({ kind: 'webhook_result', result: 'ignored', reason: 'item_not_object' }));
+      return false;
+    }
+    const message = extractMessage(item as Record<string, unknown>);
     if (!message) {
-      return { received: true, processed: false };
+      const key = (item as Record<string, unknown>).key as { remoteJid?: unknown; fromMe?: unknown } | undefined;
+      this.logger.warn(
+        JSON.stringify({
+          kind: 'webhook_result',
+          result: 'ignored',
+          reason: 'no_message_key',
+          remoteJid: maskJid(key?.remoteJid),
+          fromMe: typeof key?.fromMe === 'boolean' ? key.fromMe : null,
+        }),
+      );
+      return false;
     }
     if (message.text && message.text.length > MAX_TEXT_LENGTH) {
       throw new BadRequestException('Message text exceeds maximum accepted length');
     }
 
-    await this.messageService.ingestInbound(account.userId, {
-      accountId: account.id,
+    const stored = await this.messageService.ingestInbound(userId, {
+      accountId,
       providerMessageId: message.providerMessageId,
       fromNumber: message.fromNumber,
       text: message.text,
       timestamp: message.timestamp,
     });
 
-    return { received: true, processed: true };
+    this.logger.log(
+      JSON.stringify({
+        kind: 'webhook_result',
+        result: stored ? 'processed' : 'duplicate_or_blocked',
+        fromNumber: maskJid(message.fromNumber),
+        providerMessageId: message.providerMessageId,
+      }),
+    );
+    return stored !== null;
   }
 }
 

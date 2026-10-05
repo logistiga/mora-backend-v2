@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
 /**
  * Evolution API sends more top-level fields than just event and data
@@ -12,9 +12,9 @@ export class EvolutionWebhookDto {
   @IsString()
   event?: string;
 
+  // Object for a single message, array for a batch: both are valid Evolution payloads.
   @IsOptional()
-  @IsObject()
-  data?: Record<string, unknown>;
+  data?: Record<string, unknown> | Record<string, unknown>[];
 
   @IsOptional()
   @IsString()
