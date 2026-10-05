@@ -62,6 +62,7 @@ model User {
   bugReports        BugReport[]
   userSkills        UserSkill[]
   googleAccount     GoogleAccount?
+  apiKeys           ApiKey[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1350,5 +1351,22 @@ model GoogleAccount {
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
   @@map("google_accounts")
+}
+
+// Long-lived, revocable personal API key (ChatGPT actions, scripts). Only the
+// SHA-256 hash is stored; the full key is shown once at creation.
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  keyPrefix  String    @map("key_prefix")
+  keyHash    String    @unique @map("key_hash")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("api_keys")
 }
 

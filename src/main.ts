@@ -29,9 +29,10 @@ async function bootstrap(): Promise<void> {
   if (appConfig.swaggerEnabled) {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Mora Backend v2')
-      .setDescription('Phase A — core foundation API')
+      .setDescription('Mora Backend v2 API. Authenticate with a Bearer token or an X-Api-Key header.')
       .setVersion('0.1.0')
       .addBearerAuth()
+      .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Api-Key' }, 'api-key')
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup('docs', app, document);
