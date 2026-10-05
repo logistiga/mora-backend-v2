@@ -1,5 +1,5 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { ToolRegistryService } from './tool-registry.service.js';
 
@@ -18,6 +18,7 @@ export interface ToolDiscoveryView {
  * for every authenticated user.
  */
 @ApiTags('tools')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('tools')

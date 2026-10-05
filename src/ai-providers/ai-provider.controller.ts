@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -16,6 +16,7 @@ import { UpdateAiProviderDto } from './dto/update-ai-provider.dto.js';
  * controller — that is AiProviderSystemController (ADMIN only).
  */
 @ApiTags('ai-providers')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('ai-providers')

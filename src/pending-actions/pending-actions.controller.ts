@@ -1,11 +1,12 @@
 import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { PendingActionService } from './pending-action.service.js';
 
 @ApiTags('pending-actions')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('pending-actions')

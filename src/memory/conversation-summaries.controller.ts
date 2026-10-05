@@ -1,5 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../database/prisma.service.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
@@ -7,6 +7,7 @@ import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { ListConversationSummariesQueryDto } from './dto/list-conversation-summaries.dto.js';
 
 @ApiTags('conversation-summaries')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('conversation-summaries')

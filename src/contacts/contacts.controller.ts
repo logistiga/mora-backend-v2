@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -10,6 +10,7 @@ import { ListContactsQueryDto } from './dto/list-contacts.dto.js';
 import { UpdateContactDto } from './dto/update-contact.dto.js';
 
 @ApiTags('contacts')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('contacts')

@@ -1,5 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -7,6 +7,7 @@ import { ListProfileFactsQueryDto } from './dto/list-profile-facts.dto.js';
 import { ProfileFactsService } from './profile-facts.service.js';
 
 @ApiTags('profile-facts')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('profile-facts')

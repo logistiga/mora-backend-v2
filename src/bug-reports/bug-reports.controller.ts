@@ -8,7 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
@@ -21,6 +21,7 @@ import { ListBugReportsDto } from './dto/list-bug-reports.dto.js';
 import { UpdateBugReportDto } from './dto/update-bug-report.dto.js';
 
 @ApiTags('bug-reports')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('bug-reports')

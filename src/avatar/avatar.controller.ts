@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { AiProviderService } from '../ai-providers/ai-provider.service.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
@@ -9,6 +9,7 @@ import { AvatarProfileService } from './avatar-profile.service.js';
 import { UpdateAvatarProfileDto } from './dto/avatar-profile.dto.js';
 
 @ApiTags('avatar')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('avatar')

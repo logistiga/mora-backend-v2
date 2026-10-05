@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
@@ -20,6 +20,7 @@ export class GoogleController {
   ) {}
 
   @Get('status')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   status(@CurrentUser() user: AuthenticatedUser) {
@@ -27,6 +28,7 @@ export class GoogleController {
   }
 
   @Post('oauth/authorize')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   authorize(@CurrentUser() user: AuthenticatedUser) {
@@ -40,6 +42,7 @@ export class GoogleController {
   }
 
   @Post('gmail/account')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   connectGmail(@CurrentUser() user: AuthenticatedUser) {
@@ -47,6 +50,7 @@ export class GoogleController {
   }
 
   @Delete('account')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   disconnect(@CurrentUser() user: AuthenticatedUser) {
@@ -54,6 +58,7 @@ export class GoogleController {
   }
 
   @Post('contacts/sync')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   syncContacts(@CurrentUser() user: AuthenticatedUser) {
@@ -61,6 +66,7 @@ export class GoogleController {
   }
 
   @Get('docs')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   listDocs(@CurrentUser() user: AuthenticatedUser, @Query('limit') limit?: string) {
@@ -68,6 +74,7 @@ export class GoogleController {
   }
 
   @Get('docs/:id')
+  @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
   readDoc(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {

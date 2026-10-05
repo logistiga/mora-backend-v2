@@ -11,7 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
@@ -32,6 +32,7 @@ import { UpdateAiProviderDto } from './dto/update-ai-provider.dto.js';
  * never captured by the `/ai-providers/:id` param route.
  */
 @ApiTags('ai-providers-system')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard, RolesGuard)
 @Roles('ADMIN')

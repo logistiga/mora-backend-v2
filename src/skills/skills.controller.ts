@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { JwtAccessGuard } from '../auth/guards/jwt-access.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/entities/token-payload.interface.js';
@@ -8,6 +8,7 @@ import { UpdateSkillDto } from './dto/update-skill.dto.js';
 import { UserSkillsService } from './user-skills.service.js';
 
 @ApiTags('skills')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('skills')

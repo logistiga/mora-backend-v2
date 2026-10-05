@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { AiProviderService } from '../ai-providers/ai-provider.service.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
@@ -14,6 +14,7 @@ import { VoiceSessionService } from './voice-session.service.js';
 import { VOICE_AUDIO_FORMAT, VOICE_PROTOCOL_VERSION } from './voice.types.js';
 
 @ApiTags('voice')
+@ApiSecurity('api-key')
 @ApiBearerAuth()
 @UseGuards(JwtAccessGuard)
 @Controller('voice')
