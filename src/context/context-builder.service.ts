@@ -179,11 +179,18 @@ export class ContextBuilderService {
     // messages after its `toMessageId` are new — but getScopedHistory doesn't
     // know about the summary boundary, so we simply cap how many raw turns we
     // include; the summary itself carries the older context.
-    for (const turn of history) {
-      if (usedChars + turn.content.length > this.budgetChars) break;
-      messages.push(turn);
+    // Keep the most recent turns that fit in the budget — walking newest-first
+    // so the latest user message is ALWAYS sent to the model, even when the
+    // system/memory blocks already consumed the budget (otherwise the model
+    // only sees the system prompt and answers generically, never using tools).
+    const keptTurns: typeof history = [];
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      if (keptTurns.length > 0 && usedChars + turn.content.length > this.budgetChars) break;
+      keptTurns.unshift(turn);
       usedChars += turn.content.length;
     }
+    messages.push(...keptTurns);
 
     this.logger.debug(
       `Context built: ${messages.length} messages, ${usedChars} chars, retrieval=${retrieval.mode} (${retrieval.durationMs}ms), memories=${retrieval.memories.length}, docRetrieval=${documentRetrieval.mode} (${documentRetrieval.durationMs}ms), documents=${documentRetrieval.chunks.length}`,
