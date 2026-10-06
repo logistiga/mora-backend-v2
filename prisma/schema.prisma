@@ -1370,3 +1370,27 @@ model ApiKey {
   @@map("api_keys")
 }
 
+
+/// A goal-driven WhatsApp conversation Mora leads on the user's behalf until the
+/// objective is reached, the contact declines, or a limit is hit.
+model WhatsAppMission {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  contactId      String   @map("contact_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  objective      String
+  questions      Json
+  openingMessage String   @map("opening_message")
+  status         String
+  messagesSent   Int      @default(0) @map("messages_sent")
+  maxMessages    Int      @default(10) @map("max_messages")
+  deadlineAt     DateTime @map("deadline_at")
+  findings       Json     @default("{}")
+  report         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([conversationId, status])
+  @@index([status, deadlineAt])
+  @@map("whatsapp_missions")
+}

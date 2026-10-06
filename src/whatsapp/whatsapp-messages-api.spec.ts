@@ -96,7 +96,8 @@ describe('WhatsApp webhook: messages.update', () => {
     const prisma = { whatsAppAccount: { findUnique: vi.fn(async () => ({ id: 'a1', userId: 'u1' })) } };
     const messageService = { applyDeliveryStatus: vi.fn(async () => true), ingestInbound: vi.fn() };
     const config = { get: vi.fn(() => undefined) };
-    const controller = new WhatsAppWebhookController(prisma as never, messageService as never, config as never);
+    const missions = { onInbound: vi.fn() };
+    const controller = new WhatsAppWebhookController(prisma as never, messageService as never, config as never, missions as never);
 
     const result = await controller.handle('a1', undefined, {
       event: 'messages.update',

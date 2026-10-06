@@ -1,8 +1,14 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
 import { AuditModule } from '../audit/audit.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
+import { LlmModule } from '../llm/llm.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
+import { WHATSAPP_MISSION_QUEUE } from './whatsapp-mission.constants.js';
+import { WhatsAppMissionProcessor } from './whatsapp-mission.processor.js';
+import { WhatsAppMissionService } from './whatsapp-mission.service.js';
 import { EvolutionWhatsAppProvider } from './providers/evolution-whatsapp.provider.js';
 import { WHATSAPP_PROVIDER } from './providers/whatsapp-provider.token.js';
 import { WhatsAppAccountService } from './whatsapp-account.service.js';
@@ -11,13 +17,23 @@ import { WhatsAppMessageService } from './whatsapp-message.service.js';
 import { WhatsAppWebhookController } from './whatsapp-webhook.controller.js';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'jwt-access' }), AiProvidersModule, ContactsModule, AuditModule],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'jwt-access' }),
+    AiProvidersModule,
+    ContactsModule,
+    AuditModule,
+    LlmModule,
+    NotificationsModule,
+    BullModule.registerQueue({ name: WHATSAPP_MISSION_QUEUE }),
+  ],
   controllers: [WhatsAppController, WhatsAppWebhookController],
   providers: [
     { provide: WHATSAPP_PROVIDER, useClass: EvolutionWhatsAppProvider },
     WhatsAppAccountService,
     WhatsAppMessageService,
+    WhatsAppMissionService,
+    WhatsAppMissionProcessor,
   ],
-  exports: [WhatsAppAccountService, WhatsAppMessageService, WHATSAPP_PROVIDER],
+  exports: [WhatsAppAccountService, WhatsAppMessageService, WhatsAppMissionService, WHATSAPP_PROVIDER],
 })
 export class WhatsAppModule {}

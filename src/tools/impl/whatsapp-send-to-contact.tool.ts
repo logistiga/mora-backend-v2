@@ -5,6 +5,7 @@ import { ContactService } from '../../contacts/contact.service.js';
 import { WhatsAppMessageService } from '../../whatsapp/whatsapp-message.service.js';
 import { validateWithDto } from '../tool-validation.util.js';
 import type { MoraTool, ToolContext, ToolResult, ToolValidationResult } from '../tool.types.js';
+import { resolveWhatsAppTarget } from './whatsapp-contact-resolver.js';
 
 class WhatsAppSendToContactInput {
   @IsString()
@@ -18,19 +19,9 @@ class WhatsAppSendToContactInput {
   text: string;
 }
 
-interface WhatsAppCandidate {
-  contactId: string;
-  name: string;
-  company: string | null;
-  trustLevel: string;
-  numberLast4: string;
-  number: string;
-}
-
 /**
- * Sends a WhatsApp message to a contact found by name. It never guesses: no
- * match, no WhatsApp number, or several contacts with that name all return a
- * clear error the assistant turns into a question for the user.
+ * Sends a WhatsApp message to a contact found by name. Ambiguity is never
+ * resolved by guessing: see resolveWhatsAppTarget.
  */
 @Injectable()
 export class WhatsAppSendToContactTool implements MoraTool<WhatsAppSendToContactInput> {
@@ -59,58 +50,12 @@ export class WhatsAppSendToContactTool implements MoraTool<WhatsAppSendToContact
   }
 
   async execute(context: ToolContext, input: WhatsAppSendToContactInput): Promise<ToolResult> {
-    const matches = await this.contactService.list(context.userId, {
-      scope: context.scope,
-      space: context.space,
-      search: input.name,
-    });
-    if (matches.length === 0) {
-      return { ok: false, errorCode: 'contact_not_found', errorMessage: `Aucun contact nommé « ${input.name} ». Demande son numéro à l'utilisateur.` };
-    }
-
-    const withNumber: WhatsAppCandidate[] = [];
-    for (const contact of matches) {
-      const identity = await this.prisma.contactIdentity.findFirst({ where: { contactId: contact.id, type: 'whatsapp' } });
-      if (identity) {
-        withNumber.push({
-          contactId: contact.id,
-          name: contact.name,
-          company: contact.company ?? null,
-          trustLevel: contact.trustLevel,
-          numberLast4: identity.valueNormalized.slice(-4),
-          number: identity.valueNormalized,
-        });
-      }
-    }
-    if (withNumber.length === 0) {
-      return { ok: false, errorCode: 'contact_no_whatsapp', errorMessage: `« ${matches[0].name} » n'a pas de numéro WhatsApp enregistré.` };
-    }
-
-    // An exact name match wins over partial matches ("Mustapha" vs "Mustapha Benali").
-    const wanted = input.name.trim().toLowerCase();
-    const exact = withNumber.filter((candidate) => candidate.name.trim().toLowerCase() === wanted);
-    const pool = exact.length > 0 ? exact : withNumber;
-
-    if (pool.length > 1) {
-      return {
-        ok: false,
-        errorCode: 'ambiguous_contact',
-        errorMessage:
-          'Plusieurs contacts correspondent. Demande à l’utilisateur lequel il veut, en affichant le nom, l’entreprise et les 4 derniers chiffres du numéro.',
-        data: {
-          candidates: pool.map(({ name, company, numberLast4 }) => ({ name, company, numberLast4 })),
-        },
-      };
-    }
-
-    const target = pool[0];
-    if (target.trustLevel === 'blocked') {
-      return { ok: false, errorCode: 'contact_blocked', errorMessage: `« ${target.name} » est bloqué : aucun message envoyé.` };
-    }
+    const resolved = await resolveWhatsAppTarget({ prisma: this.prisma, contactService: this.contactService }, context, input.name);
+    if ('error' in resolved) return resolved.error;
 
     try {
-      const message = await this.messageService.sendToContact(context.userId, target.contactId, input.text);
-      return { ok: true, data: { sentTo: target.name, numberLast4: target.numberLast4, messageId: message.id } };
+      const message = await this.messageService.sendToContact(context.userId, resolved.target.contactId, input.text);
+      return { ok: true, data: { sentTo: resolved.target.name, numberLast4: resolved.target.numberLast4, messageId: message.id } };
     } catch (error) {
       return {
         ok: false,

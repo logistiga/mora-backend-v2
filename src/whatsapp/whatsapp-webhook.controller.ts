@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
 import { EvolutionWebhookDto } from './dto/evolution-webhook.dto.js';
 import { WhatsAppMessageService } from './whatsapp-message.service.js';
+import { WhatsAppMissionService } from './whatsapp-mission.service.js';
 import { maskJid } from './webhook-diagnostics.util.js';
 
 const MAX_TEXT_LENGTH = 4000;
@@ -28,6 +29,7 @@ export class WhatsAppWebhookController {
     private readonly prisma: PrismaService,
     private readonly messageService: WhatsAppMessageService,
     private readonly configService: ConfigService,
+    private readonly missions: WhatsAppMissionService,
   ) {}
 
   @Post(':accountId')
@@ -98,6 +100,9 @@ export class WhatsAppWebhookController {
       text: message.text,
       timestamp: message.timestamp,
     });
+
+    // A running goal-driven mission answers this contact. Queued, so the webhook returns at once.
+    if (stored) await this.missions.onInbound(stored.conversationId);
 
     this.logger.log(
       JSON.stringify({
