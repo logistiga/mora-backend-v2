@@ -3,9 +3,11 @@
 Backend for Mora, a personal AI assistant platform — built from scratch, fully separate from
 [mora-s-hub](https://github.com/logistiga/mora-s-hub) (v1, unaffected by this repo).
 
-**Phase A — Core Foundation** is implemented here: no LLM, memory, embeddings, agents,
-WhatsApp/email, voice or avatar yet. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what comes next
-and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the technical decisions behind this phase.
+The backend is implemented across the planned phases: router and agents, LLM providers, memory and
+embeddings, tools and permissions, documents/tasks/reminders, WhatsApp/email/calendar/Google
+connectors, voice and avatar. Remaining work (cross-scope hybrid handling, e2e validation, human
+voice/avatar testing) is listed in [`docs/ROADMAP.md`](docs/ROADMAP.md). Technical decisions are in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Stack
 

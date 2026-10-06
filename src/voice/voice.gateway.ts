@@ -332,7 +332,7 @@ export class VoiceGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     const now = Date.now();
-    const vadEvent = state.vad.process(frame, now);
+    const vadEvent = state.vad.process(frame, now, Boolean(state.ttsAbortController));
     if (vadEvent?.type === 'speech_started') {
       const inputGenerationId = this.runtimeRegistry.newGeneration(sessionId) ?? state.generationId;
       state.sttGenerationId = inputGenerationId;

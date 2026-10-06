@@ -14,7 +14,7 @@ import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import { detectScriptLanguage } from '../common/language/script-language.util.js';
 import { LANGUAGE_POLICY_INSTRUCTION, buildShortTurnLexicalSignalNote } from '../common/language/language-policy-prompt.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
-import type { RouterDecisionResult } from '../router/router.types.js';
+import type { MoraSpace, ProfessionalSpace, RouterDecisionResult } from '../router/router.types.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
 import type { ToolContext, ToolScope } from '../tools/tool.types.js';
 
@@ -57,8 +57,8 @@ export interface OrchestratorResult {
 
 const HYBRID_BLOCKED_MESSAGE =
   'Votre demande mélange des éléments personnels et professionnels. ' +
-  "Le mode cross-scope est désactivé par défaut : merci de reformuler séparément " +
-  "la partie personnelle et la partie professionnelle.";
+  'Mora traite chaque espace séparément : merci de reformuler la partie personnelle et ' +
+  'la partie professionnelle dans deux messages distincts.';
 
 const REJECTION_MESSAGES: Record<string, string> = {
   unknown_tool: "Je ne dispose pas de cette action.",
@@ -190,15 +190,7 @@ export class MoraOrchestratorService {
         this.logger.debug('Hybrid request blocked: cross-scope is disabled');
         return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true } };
       }
-      // Cross-scope is explicitly enabled, but Phase B/C do not implement real
-      // hybrid merging (Personal+Professional combined context/actions) — that
-      // is out of scope here. Degrade safely rather than fabricate a merge.
-      return {
-        content:
-          "Le mode cross-scope est activé mais le traitement hybride combiné n'est pas " +
-          'encore implémenté (prévu à une phase ultérieure). Merci de reformuler séparément.',
-        metadata: { agent: 'hybrid', crossScopeBlocked: false, notImplemented: true },
-      };
+      return this.dispatchSplitHybrid(user, message, conversationId, channel, recentInterruption, externalContextNotes);
     }
 
     const scope = decision.route as ToolScope; // 'personal' | 'professional' only past this point
@@ -224,6 +216,93 @@ export class MoraOrchestratorService {
           });
 
     return this.resolveAgentResponse(user, message, decision, conversationId, scope, agentResponse);
+  }
+
+  /**
+   * Hybrid requests are split, never merged: each part goes to its own agent
+   * with its own scope, so no context or tool action crosses the personal /
+   * professional boundary. If the split cannot be produced, the user is asked
+   * to send the two parts separately.
+   */
+  private async dispatchSplitHybrid(
+    user: AgentUser,
+    message: string,
+    conversationId: string,
+    channel: 'text' | 'voice' | 'vision' | 'voice_vision',
+    recentInterruption: boolean,
+    externalContextNotes: string[],
+  ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
+    const split = await this.routerService.splitHybrid(message, user.id);
+    if (!split) {
+      this.logger.debug('Hybrid split unavailable: asking the user to split the message');
+      return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true, splitFailed: true } };
+    }
+
+    const professionalRouting = await this.routerService.classify(split.professional, user.id);
+    const professionalSpace: ProfessionalSpace =
+      professionalRouting.route === 'professional' ? (professionalRouting.space as ProfessionalSpace) : 'general';
+
+    const personalDecision = this.buildPartDecision('personal', 'personal', 'personal');
+    const professionalDecision = this.buildPartDecision('professional', 'professional', professionalSpace);
+
+    const personalResponse = await this.personalAgent.handle({
+      user,
+      message: split.personal,
+      conversationId,
+      routerDecision: personalDecision,
+      channel,
+      recentInterruption,
+      externalContextNotes,
+    });
+    const personalResult = await this.resolveAgentResponse(
+      user, split.personal, personalDecision, conversationId, 'personal', personalResponse,
+    );
+
+    const professionalResponse = await this.professionalAgent.handle({
+      user,
+      message: split.professional,
+      conversationId,
+      routerDecision: professionalDecision,
+      channel,
+      recentInterruption,
+      externalContextNotes,
+    });
+    const professionalResult = await this.resolveAgentResponse(
+      user, split.professional, professionalDecision, conversationId, 'professional', professionalResponse,
+    );
+
+    const actions = [personalResult.action, professionalResult.action].filter(
+      (action): action is OrchestratorConfirmationAction => Boolean(action),
+    );
+    if (actions.length > 1) {
+      return {
+        content: 'Vous avez demandé deux actions à la fois : merci de les envoyer une par une.',
+        metadata: { agent: 'hybrid', split: true, multipleActions: true },
+      };
+    }
+
+    return {
+      content: `**Personnel**\n${personalResult.content}\n\n**Professionnel**\n${professionalResult.content}`,
+      metadata: { agent: 'hybrid', split: true },
+      action: actions[0],
+    };
+  }
+
+  private buildPartDecision(
+    route: 'personal' | 'professional',
+    scope: 'personal' | 'professional',
+    space: MoraSpace,
+  ): RouterDecisionResult {
+    return {
+      route,
+      scope,
+      space,
+      intent: 'split_part',
+      complexity: 'medium',
+      securityLevel: 'medium',
+      confidence: 0.8,
+      method: 'rules',
+    };
   }
 
   /**

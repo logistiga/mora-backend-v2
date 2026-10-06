@@ -235,6 +235,37 @@ describe('MoraRouterService', () => {
     });
   });
 
+  describe('splitHybrid', () => {
+    it('returns both parts when the LLM answers with valid JSON', async () => {
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true,
+        content: '{"personal":"Rappelle-moi mon rdv","professional":"Statut Logistiga ?"}',
+        provider: 'p', model: 'm',
+      });
+
+      await expect(service.splitHybrid('rdv et statut Logistiga')).resolves.toEqual({
+        personal: 'Rappelle-moi mon rdv',
+        professional: 'Statut Logistiga ?',
+      });
+    });
+
+    it('returns null when no LLM is configured', async () => {
+      await expect(service.splitHybrid('rdv et statut Logistiga')).resolves.toBeNull();
+    });
+
+    it('returns null when a part is missing or the output is not JSON', async () => {
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true, content: '{"personal":"rdv","professional":""}', provider: 'p', model: 'm',
+      });
+      await expect(service.splitHybrid('x')).resolves.toBeNull();
+
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true, content: 'not json', provider: 'p', model: 'm',
+      });
+      await expect(service.splitHybrid('x')).resolves.toBeNull();
+    });
+  });
+
   describe('Arabic-script greeting recognition (language-selection-policy fix)', () => {
     // Regression: a real voice test showed "السلام عليكم" behaved
     // inconsistently mid-conversation compared to the Latin-script "Salam",

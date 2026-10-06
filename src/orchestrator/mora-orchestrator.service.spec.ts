@@ -3,7 +3,7 @@ import type { AgentUser } from '../agents/agent.types.js';
 import { MoraOrchestratorService } from './mora-orchestrator.service.js';
 
 function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
-  const routerService = { classify: vi.fn() };
+  const routerService = { classify: vi.fn(), splitHybrid: vi.fn() };
   const personalAgent = { handle: vi.fn() };
   const professionalAgent = { handle: vi.fn() };
   const conversationsService = {
@@ -137,27 +137,68 @@ describe('MoraOrchestratorService', () => {
     expect(result.space).toBe('logistiga');
   });
 
-  it('blocks "hybrid" by default (cross-scope disabled) without calling any agent', async () => {
-    ctx.routerService.classify.mockResolvedValue({
-      route: 'hybrid',
-      scope: 'hybrid',
-      space: 'hybrid',
-      intent: 'task',
-      complexity: 'medium',
-      securityLevel: 'medium',
-      confidence: 0.7,
-      method: 'rules',
+  it.each([false, true])(
+    'never merges "hybrid" (cross-scope enabled=%s): asks to split, calls no agent',
+    async (crossScopeEnabled) => {
+      ctx = buildService({ crossScopeEnabled });
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'hybrid',
+        scope: 'hybrid',
+        space: 'hybrid',
+        intent: 'task',
+        complexity: 'medium',
+        securityLevel: 'medium',
+        confidence: 0.7,
+        method: 'rules',
+      });
+
+      const result = await ctx.service.handleMessage({ user, message: 'perso + logistiga' });
+
+      expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
+      expect(ctx.professionalAgent.handle).not.toHaveBeenCalled();
+      expect(result.route).toBe('hybrid');
+      expect(result.response).toMatch(/deux messages distincts/i);
+      expect(ctx.auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ crossScopeBlocked: true }) }),
+      );
+    },
+  );
+
+  it('splits a hybrid message (cross-scope enabled) and answers each part with its own agent', async () => {
+    ctx = buildService({ crossScopeEnabled: true });
+    ctx.routerService.classify.mockResolvedValueOnce({
+      route: 'hybrid', scope: 'hybrid', space: 'hybrid', intent: 'task', complexity: 'medium', securityLevel: 'medium', confidence: 0.7, method: 'rules',
     });
+    ctx.routerService.classify.mockResolvedValueOnce({
+      route: 'professional', scope: 'professional', space: 'logistiga', intent: 'question', complexity: 'low', securityLevel: 'medium', confidence: 0.9, method: 'rules',
+    });
+    ctx.routerService.splitHybrid.mockResolvedValue({ personal: 'Rappelle-moi mon rdv', professional: 'Statut Logistiga ?' });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'rdv demain', metadata: {} });
+    ctx.professionalAgent.handle.mockResolvedValue({ content: 'tout va bien', metadata: {} });
+
+    const result = await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv et statut Logistiga ?' });
+
+    expect(ctx.personalAgent.handle).toHaveBeenCalledWith(expect.objectContaining({ message: 'Rappelle-moi mon rdv' }));
+    expect(ctx.professionalAgent.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Statut Logistiga ?', routerDecision: expect.objectContaining({ space: 'logistiga' }) }),
+    );
+    expect(result.response).toContain('rdv demain');
+    expect(result.response).toContain('tout va bien');
+    expect(result.route).toBe('hybrid');
+  });
+
+  it('asks the user to split when the LLM split is unavailable (cross-scope enabled)', async () => {
+    ctx = buildService({ crossScopeEnabled: true });
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'hybrid', scope: 'hybrid', space: 'hybrid', intent: 'task', complexity: 'medium', securityLevel: 'medium', confidence: 0.7, method: 'rules',
+    });
+    ctx.routerService.splitHybrid.mockResolvedValue(null);
 
     const result = await ctx.service.handleMessage({ user, message: 'perso + logistiga' });
 
     expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
     expect(ctx.professionalAgent.handle).not.toHaveBeenCalled();
-    expect(result.route).toBe('hybrid');
-    expect(result.response).toMatch(/cross-scope est désactivé/i);
-    expect(ctx.auditService.log).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: expect.objectContaining({ crossScopeBlocked: true }) }),
-    );
+    expect(result.response).toMatch(/deux messages distincts/i);
   });
 
   it('answers a general "direct" question with a real LLM reply instead of "D\'accord."', async () => {
