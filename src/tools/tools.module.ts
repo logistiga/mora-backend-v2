@@ -60,6 +60,7 @@ import { WhatsAppReadMessagesTool } from './impl/whatsapp-read-messages.tool.js'
 import { WhatsAppSearchMessagesTool } from './impl/whatsapp-search-messages.tool.js';
 import { WhatsAppSendDocumentTool } from './impl/whatsapp-send-document.tool.js';
 import { WhatsAppSendMessageTool } from './impl/whatsapp-send-message.tool.js';
+import { WhatsAppSendToContactTool } from './impl/whatsapp-send-to-contact.tool.js';
 import { PermissionService } from './permission.service.js';
 import { ToolExecutorService } from './tool-executor.service.js';
 import { ToolRegistryService } from './tool-registry.service.js';
@@ -100,6 +101,7 @@ const PHASE_E_TOOLS = [
   WhatsAppGetContactTool,
   WhatsAppDraftReplyTool,
   WhatsAppSendMessageTool,
+  WhatsAppSendToContactTool,
   WhatsAppSendDocumentTool,
   EmailListThreadsTool,
   EmailReadThreadTool,

@@ -1,4 +1,6 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
+import { GOOGLE_CONTACTS_SYNC_QUEUE, GoogleContactsSyncProcessor } from './google-contacts-sync.processor.js';
 import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
@@ -11,9 +13,22 @@ import { GoogleController } from './google.controller.js';
 import { GoogleOAuthService } from './google-oauth.service.js';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'jwt-access' }), AiProvidersModule, ContactsModule],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'jwt-access' }),
+    AiProvidersModule,
+    ContactsModule,
+    BullModule.registerQueue({ name: GOOGLE_CONTACTS_SYNC_QUEUE }),
+  ],
   controllers: [GoogleController],
-  providers: [GoogleOAuthService, GoogleCalendarProvider, GoogleGmailEmailProvider, GoogleGmailAccountService, GoogleContactsSyncService, GoogleDocsService],
+  providers: [
+    GoogleOAuthService,
+    GoogleCalendarProvider,
+    GoogleGmailEmailProvider,
+    GoogleGmailAccountService,
+    GoogleContactsSyncService,
+    GoogleContactsSyncProcessor,
+    GoogleDocsService,
+  ],
   exports: [GoogleOAuthService, GoogleCalendarProvider, GoogleGmailEmailProvider],
 })
 export class GoogleModule {}
