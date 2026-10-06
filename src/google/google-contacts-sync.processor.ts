@@ -3,15 +3,17 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job, Queue } from 'bullmq';
 import { PrismaService } from '../database/prisma.service.js';
 import { GoogleContactsSyncService } from './google-contacts-sync.service.js';
+import { GoogleContactsPushService } from './google-contacts-push.service.js';
 
 export const GOOGLE_CONTACTS_SYNC_QUEUE = 'google-contacts-sync';
-const SCHEDULER_ID = 'google-contacts-sync-every-6h';
-const SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
+const SCHEDULER_ID = 'google-contacts-sync-every-30min';
+const SYNC_EVERY_MS = 30 * 60 * 1000;
 
 /**
- * Keeps the contact book up to date: every 6 hours, each connected Google
- * account's contacts are imported again (new contacts added, renames applied).
- * The sync itself is idempotent, so a repeated run never duplicates anyone.
+ * Keeps Google and Mora's contact books in step, every 30 minutes, for every
+ * connected Google account: Google contacts are imported into Mora, then
+ * Mora's new personal contacts are pushed to Google. Both steps are
+ * idempotent, so a repeated run never duplicates anyone.
  */
 @Processor(GOOGLE_CONTACTS_SYNC_QUEUE)
 export class GoogleContactsSyncProcessor extends WorkerHost implements OnModuleInit {
@@ -21,6 +23,7 @@ export class GoogleContactsSyncProcessor extends WorkerHost implements OnModuleI
     @InjectQueue(GOOGLE_CONTACTS_SYNC_QUEUE) private readonly queue: Queue,
     private readonly prisma: PrismaService,
     private readonly contactsSync: GoogleContactsSyncService,
+    private readonly contactsPush: GoogleContactsPushService,
   ) {
     super();
   }
@@ -34,10 +37,13 @@ export class GoogleContactsSyncProcessor extends WorkerHost implements OnModuleI
     const accounts = await this.prisma.googleAccount.findMany({ select: { userId: true } });
     for (const { userId } of accounts) {
       try {
-        const result = await this.contactsSync.sync(userId);
-        this.logger.log(`Google contacts sync done: imported=${result.imported} renamed=${result.renamed}`);
+        const pulled = await this.contactsSync.sync(userId);
+        const pushed = await this.contactsPush.push(userId);
+        this.logger.log(
+          `Google contacts sync done: imported=${pulled.imported} renamed=${pulled.renamed} pushed=${pushed.pushed} failed=${pushed.failed}`,
+        );
       } catch (error) {
-        // One broken account (revoked token, Google outage) must not stop the others.
+        // One broken account (revoked token, missing write scope) must not stop the others.
         this.logger.warn(`Google contacts sync failed for one account: ${error instanceof Error ? error.message : 'unknown error'}`);
       }
     }

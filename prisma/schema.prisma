@@ -841,6 +841,8 @@ model Contact {
   name      String
   firstName String? @map("first_name")
   lastName  String? @map("last_name")
+  /// Google People resource name ("people/c123…") once the contact exists in the Google address book.
+  googleResourceName String? @map("google_resource_name")
   company   String?
   jobTitle  String? @map("job_title")
 

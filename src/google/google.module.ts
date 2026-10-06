@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
 import { GoogleContactsSyncService } from './google-contacts-sync.service.js';
+import { GoogleContactsPushService } from './google-contacts-push.service.js';
 import { GoogleDocsService } from './google-docs.service.js';
 import { GoogleCalendarProvider } from './google-calendar.provider.js';
 import { GoogleGmailEmailProvider } from './google-gmail.provider.js';
@@ -26,6 +27,7 @@ import { GoogleOAuthService } from './google-oauth.service.js';
     GoogleGmailEmailProvider,
     GoogleGmailAccountService,
     GoogleContactsSyncService,
+    GoogleContactsPushService,
     GoogleContactsSyncProcessor,
     GoogleDocsService,
   ],
