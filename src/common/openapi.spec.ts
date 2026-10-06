@@ -103,6 +103,7 @@ describe('OpenAPI authentication documentation', () => {
         dualAuthOperations++;
       }
     }
-    expect(dualAuthOperations).toBe(110);
+    // +2 since the contact delete and identity-unlink routes were added.
+    expect(dualAuthOperations).toBe(112);
   });
 });

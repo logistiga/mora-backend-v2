@@ -135,6 +135,21 @@ export class EmailMessageService {
     return this.prisma.emailThread.create({ data: { accountId, contactId, subject, scope: DEFAULT_SCOPE, space: DEFAULT_SPACE } });
   }
 
+  /**
+   * Sends a new e-mail (not a reply) to a contact's address, from the user's first mail account.
+   * Only reached after the user confirmed the tool call. Recorded in the audit trail; it does not open a thread.
+   */
+  async sendNewToContact(userId: string, contactId: string, subject: string, text: string): Promise<{ to: string }> {
+    const [account] = await this.accountService.list(userId);
+    if (!account) throw new Error('No mail account connected');
+    const recipients = await this.contactAddresses(contactId);
+    if (recipients.length === 0) throw new Error('Contact has no e-mail address');
+    const connection = await this.accountService.resolveConnection(account.id);
+    await this.provider.send(connection, { to: recipients, subject, text });
+    await this.auditService.log({ userId, action: 'email_message_sent', scope: DEFAULT_SCOPE, space: DEFAULT_SPACE, metadata: { contactId } });
+    return { to: recipients[0] };
+  }
+
   private async contactAddresses(contactId: string): Promise<string[]> {
     const identity = await this.prisma.contactIdentity.findFirst({ where: { contactId, type: 'email' } });
     return identity ? [identity.valueNormalized] : [];

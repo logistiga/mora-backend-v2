@@ -23,8 +23,9 @@ export class ContactService {
         lastName: dto.lastName,
         company: dto.company,
         jobTitle: dto.jobTitle,
-        scope: dto.scope,
-        space: dto.space,
+        // Every contact lives in the same book, so it is stored under one fixed scope.
+        scope: 'personal',
+        space: 'personal',
         relationship: dto.relationship,
         trustLevel: dto.trustLevel ?? 'unknown',
         notes: dto.notes,
@@ -34,9 +35,9 @@ export class ContactService {
   }
 
   async list(userId: string, query: ListContactsQueryDto): Promise<Contact[]> {
+    // One address book per user: scope and space do not split contacts (Google's
+    // contacts are not divided between work and personal), so they never filter here.
     const where: Prisma.ContactWhereInput = { userId };
-    if (query.scope) where.scope = query.scope;
-    if (query.space) where.space = query.space;
     if (query.trustLevel) where.trustLevel = query.trustLevel;
     if (query.search) {
       where.OR = [
@@ -67,6 +68,23 @@ export class ContactService {
         tags: dto.tags,
       },
     });
+  }
+
+  /** Deletes a contact and its identities (cascade). Returns the deleted row so callers can act on its Google copy. */
+  async remove(userId: string, id: string) {
+    const contact = await this.getById(userId, id);
+    await this.prisma.contact.delete({ where: { id } });
+    return contact;
+  }
+
+  /** Unlinks one phone number or e-mail from a contact. */
+  async removeIdentity(userId: string, contactId: string, identityId: string): Promise<void> {
+    await this.getById(userId, contactId);
+    const identity = await this.prisma.contactIdentity.findUnique({ where: { id: identityId } });
+    if (!identity || identity.contactId !== contactId || identity.userId !== userId) {
+      throw new NotFoundException('Identity not found');
+    }
+    await this.prisma.contactIdentity.delete({ where: { id: identityId } });
   }
 
   /** A given WhatsApp number/email can only ever belong to one contact per user (AGENTS §22) — this is the actual reconciliation mechanism. */

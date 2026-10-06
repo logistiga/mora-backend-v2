@@ -76,6 +76,7 @@ export const SKILL_CATALOG: readonly SkillDefinition[] = [
       'email_search',
       'email_draft_reply',
       'email_send',
+      'email_send_to_contact',
       'email_send_attachment',
     ],
   },

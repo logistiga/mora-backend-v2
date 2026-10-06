@@ -82,6 +82,30 @@ export class GoogleContactsSyncService {
       .map((e) => (e.value ?? '').trim().toLowerCase())
       .filter((v) => v.includes('@'));
 
+    // Already linked to this Google contact: nothing to do. Without this, a contact
+    // with no phone or e-mail would be re-created on every run.
+    if (person.resourceName) {
+      const linked = await this.prisma.contact.findFirst({ where: { userId, googleResourceName: person.resourceName }, select: { id: true } });
+      if (linked) {
+        result.alreadyKnown += 1;
+        return;
+      }
+    }
+
+    // A contact with no phone or e-mail can only be recognised by name, and only
+    // if it is not already linked to another Google contact.
+    if (phones.length === 0 && emails.length === 0 && person.resourceName) {
+      const sameName = await this.prisma.contact.findFirst({
+        where: { userId, name, googleResourceName: null, identities: { none: {} } },
+        select: { id: true },
+      });
+      if (sameName) {
+        await this.prisma.contact.update({ where: { id: sameName.id }, data: { googleResourceName: person.resourceName } });
+        result.alreadyKnown += 1;
+        return;
+      }
+    }
+
     for (const [type, values] of [
       ['whatsapp', phones],
       ['email', emails],

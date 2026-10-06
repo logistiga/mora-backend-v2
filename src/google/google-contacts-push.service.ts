@@ -37,7 +37,7 @@ export function buildGoogleContactBody(contact: PushableContact): Record<string,
 }
 
 /**
- * Pushes personal contacts created in Mora into the user's Google address
+ * Pushes contacts created in Mora into the user's Google address
  * book. A contact is pushed once: its Google resource name is stored right
  * after creation, so the next run and the next pull never duplicate it.
  */
@@ -58,7 +58,7 @@ export class GoogleContactsPushService {
     const token = await this.oauth.getAccessToken(userId);
 
     const pending = await this.prisma.contact.findMany({
-      where: { userId, scope: 'personal', googleResourceName: null },
+      where: { userId, googleResourceName: null },
       include: { identities: true },
       take: MAX_PER_RUN,
       orderBy: { createdAt: 'asc' },
