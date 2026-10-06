@@ -7,7 +7,8 @@ import type { CreateContactDto } from './dto/create-contact.dto.js';
 import type { ListContactsQueryDto } from './dto/list-contacts.dto.js';
 import type { UpdateContactDto } from './dto/update-contact.dto.js';
 
-const LIST_LIMIT = 200;
+// Large enough for a full address book (Google sync imports hundreds of contacts).
+const LIST_LIMIT = 2000;
 
 @Injectable()
 export class ContactService {
@@ -43,7 +44,7 @@ export class ContactService {
         { company: { contains: query.search, mode: 'insensitive' } },
       ];
     }
-    return this.prisma.contact.findMany({ where, orderBy: { updatedAt: 'desc' }, take: LIST_LIMIT });
+    return this.prisma.contact.findMany({ where, orderBy: { updatedAt: 'desc' }, take: LIST_LIMIT, include: { identities: true } });
   }
 
   async getById(userId: string, id: string) {
