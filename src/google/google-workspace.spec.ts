@@ -35,7 +35,7 @@ describe('googleRequest', () => {
 
 describe('GoogleContactsSyncService', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
-  let contacts: { findByIdentity: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; addIdentity: ReturnType<typeof vi.fn> };
+  let contacts: { findByIdentity: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; addIdentity: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   let service: GoogleContactsSyncService;
 
   beforeEach(() => {
@@ -45,6 +45,7 @@ describe('GoogleContactsSyncService', () => {
       findByIdentity: vi.fn(async () => null),
       create: vi.fn(async () => ({ id: 'c-new' })),
       addIdentity: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
     };
     const oauth = { getAccessToken: vi.fn(async () => 'AT') };
     service = new GoogleContactsSyncService(oauth as never, contacts as never);
@@ -65,7 +66,7 @@ describe('GoogleContactsSyncService', () => {
       }),
     );
     const result = await service.sync('u1');
-    expect(result).toEqual({ imported: 1, alreadyKnown: 0, skippedNoName: 0 });
+    expect(result).toEqual({ imported: 1, alreadyKnown: 0, renamed: 0, skippedNoName: 0 });
     expect(contacts.create).toHaveBeenCalledWith('u1', expect.objectContaining({ name: 'Mustapha', scope: 'personal', space: 'personal', company: 'LogistiGA' }));
     expect(contacts.addIdentity).toHaveBeenCalledWith('u1', 'c-new', { type: 'whatsapp', value: '+24177104545' });
     expect(contacts.addIdentity).toHaveBeenCalledWith('u1', 'c-new', { type: 'email', value: 'mustapha@example.com' });
@@ -78,11 +79,21 @@ describe('GoogleContactsSyncService', () => {
     expect(contacts.create).toHaveBeenCalled();
   });
 
-  it('leaves a contact already known by phone untouched', async () => {
-    contacts.findByIdentity.mockResolvedValueOnce({ id: 'existing' });
+  it('leaves a contact that already has a real name untouched', async () => {
+    contacts.findByIdentity.mockResolvedValueOnce({ id: 'existing', name: 'Déjà nommé' });
     fetchMock.mockResolvedValueOnce(json({ connections: [{ names: [{ displayName: 'Known' }], phoneNumbers: [{ value: '+24162222111' }] }] }));
     const result = await service.sync('u1');
-    expect(result).toEqual({ imported: 0, alreadyKnown: 1, skippedNoName: 0 });
+    expect(result).toEqual({ imported: 0, alreadyKnown: 1, renamed: 0, skippedNoName: 0 });
+    expect(contacts.update).not.toHaveBeenCalled();
+    expect(contacts.create).not.toHaveBeenCalled();
+  });
+
+  it('gives a known number its Google name when the contact only has the number as name', async () => {
+    contacts.findByIdentity.mockResolvedValueOnce({ id: 'auto', name: '+24162222111' });
+    fetchMock.mockResolvedValueOnce(json({ connections: [{ names: [{ displayName: 'Ami Google' }], phoneNumbers: [{ value: '+24162222111' }] }] }));
+    const result = await service.sync('u1');
+    expect(result).toEqual({ imported: 0, alreadyKnown: 0, renamed: 1, skippedNoName: 0 });
+    expect(contacts.update).toHaveBeenCalledWith('u1', 'auto', { name: 'Ami Google' });
     expect(contacts.create).not.toHaveBeenCalled();
   });
 
@@ -90,7 +101,7 @@ describe('GoogleContactsSyncService', () => {
     fetchMock.mockResolvedValueOnce(json({ connections: [{ phoneNumbers: [{ value: '+24165000000' }] }], nextPageToken: 'P2' }));
     fetchMock.mockResolvedValueOnce(json({ connections: [{ names: [{ displayName: 'Second' }] }] }));
     const result = await service.sync('u1');
-    expect(result).toEqual({ imported: 1, alreadyKnown: 0, skippedNoName: 1 });
+    expect(result).toEqual({ imported: 1, alreadyKnown: 0, renamed: 0, skippedNoName: 1 });
     expect(fetchMock.mock.calls[1][0]).toContain('pageToken=P2');
   });
 });

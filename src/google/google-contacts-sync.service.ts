@@ -18,7 +18,14 @@ interface GooglePerson {
 export interface ContactSyncResult {
   imported: number;
   alreadyKnown: number;
+  renamed: number;
   skippedNoName: number;
+}
+
+/** A name that is empty or only digits/symbols, like the number WhatsApp used before a real name was known. */
+function isPlaceholderName(name: string | null | undefined): boolean {
+  const trimmed = (name ?? '').trim();
+  return trimmed === '' || /^[+\d\s()\-.]+$/.test(trimmed);
 }
 
 /**
@@ -36,7 +43,7 @@ export class GoogleContactsSyncService {
 
   async sync(userId: string): Promise<ContactSyncResult> {
     const token = await this.oauth.getAccessToken(userId);
-    const result: ContactSyncResult = { imported: 0, alreadyKnown: 0, skippedNoName: 0 };
+    const result: ContactSyncResult = { imported: 0, alreadyKnown: 0, renamed: 0, skippedNoName: 0 };
 
     let pageToken: string | undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -71,15 +78,20 @@ export class GoogleContactsSyncService {
       .map((e) => (e.value ?? '').trim().toLowerCase())
       .filter((v) => v.includes('@'));
 
-    for (const phone of phones) {
-      if (await this.contacts.findByIdentity(userId, 'whatsapp', phone)) {
-        result.alreadyKnown += 1;
-        return;
-      }
-    }
-    for (const email of emails) {
-      if (await this.contacts.findByIdentity(userId, 'email', email)) {
-        result.alreadyKnown += 1;
+    for (const [type, values] of [
+      ['whatsapp', phones],
+      ['email', emails],
+    ] as const) {
+      for (const value of values) {
+        const existing = await this.contacts.findByIdentity(userId, type, value);
+        if (!existing) continue;
+        // Known contact: only fill in a missing or number-only name, never overwrite a name the user set.
+        if (isPlaceholderName(existing.name)) {
+          await this.contacts.update(userId, existing.id, { name });
+          result.renamed += 1;
+        } else {
+          result.alreadyKnown += 1;
+        }
         return;
       }
     }
