@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { selectGptOperations } from './common/openapi/gpt-openapi.util.js';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module.js';
@@ -36,6 +37,11 @@ async function bootstrap(): Promise<void> {
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
     SwaggerModule.setup('docs', app, document);
+    const adapter = app.getHttpAdapter();
+    const gptDocument = selectGptOperations(document, `${appConfig.apiPrefix}`);
+    adapter.get(`/${appConfig.apiPrefix}/gpt/openapi.json`, (_req, res) =>
+      adapter.reply(res, gptDocument, 200),
+    );
   }
 
   await app.listen(appConfig.port);
