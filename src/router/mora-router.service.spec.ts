@@ -109,6 +109,12 @@ describe('MoraRouterService', () => {
     expect(result.space).toBe('personal');
   });
 
+  it('sends an explicit "professionnel" request to the professional space, not personal', async () => {
+    const result = await service.classify('Liste mes contacts professionnels');
+    expect(result.route).toBe('professional');
+    expect(result.scope).toBe('professional');
+  });
+
   it('classifies a Logistiga message as professional/logistiga', async () => {
     const result = await service.classify('Vérifie le statut de la commande Logistiga');
     expect(result.route).toBe('professional');

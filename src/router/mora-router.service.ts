@@ -25,7 +25,7 @@ const PROFESSIONAL_SPACE_PATTERNS: Array<{ space: ProfessionalSpace; pattern: Re
 ];
 
 const PROFESSIONAL_GENERAL_PATTERN =
-  /\b(travail|entreprise|client|facture|devis|r[ée]union|projet|coll[èe]gue|patron|contrat|budget|rapport)\b/i;
+  /\b(travail|entreprise|client|facture|devis|r[ée]union|projet|coll[èe]gue|patron|contrat|budget|rapport|professionnel(?:le)?s?|pro|bureau|boulot|business)\b/i;
 
 const GREETING_PATTERN =
   /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|salam|salaam|marhba|marhaba|chokran|choukran|labas|inshallah|inchallah|ok|d'accord)\b/i;
