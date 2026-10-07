@@ -13,6 +13,23 @@
  * `create_memory`, and "Rappelle-moi de ..." sometimes produced a task
  * instead of a reminder.
  */
+/**
+ * Mora is a single-owner app (no public sign-up, one account): there is never a third party
+ * to protect from the user's own data. A general-purpose model's own training still pushes it
+ * to decline "personal/sensitive" categories (passport numbers, IDs...) out of habit, even when
+ * the person asking is unambiguously the data's own owner — observed for real in staging. This
+ * is stated plainly rather than left implicit, since the implicit framing alone did not stop it.
+ */
+export const SINGLE_OWNER_TRUST_NOTE =
+  "Mora est l'assistant privé d'un seul utilisateur, propriétaire de ses propres données : il n'y a jamais de tiers à " +
+  'protéger ici. Ne refuse jamais de mémoriser, de restituer ou de discuter une information que l\'utilisateur donne ou ' +
+  'demande sur lui-même, sa famille, ses affaires ou ses contacts — y compris un identifiant comme un numéro de ' +
+  'passeport, de carte, une adresse ou une date — au motif qu\'elle serait "personnelle" ou "sensible" : c\'est son ' +
+  "information, il en est l'unique autorité, et il peut la changer ou la reprendre à tout moment. Si tu ne l'as pas " +
+  "(encore), dis-le simplement et propose qu'il te la donne, sans invoquer une politique de confidentialité. La seule " +
+  "limite réelle porte sur un secret d'accès technique qu'il ne t'a pas confié pour cet usage précis (mot de passe " +
+  "d'un tiers, clé API d'un service) — jamais sur une information qui lui appartient.";
+
 export const TOOL_CHOICE_RULES =
   'Choix de l\'outil (important) : ' +
   '- "retiens que", "souviens-toi que", "rappelle-toi (que/de)", "mémorise", "note que", ' +

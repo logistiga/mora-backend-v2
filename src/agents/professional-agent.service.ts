@@ -4,7 +4,7 @@ import { ContextBuilderService } from '../context/context-builder.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { ToolRegistryService } from '../tools/tool-registry.service.js';
 import { UserSkillsService } from '../skills/user-skills.service.js';
-import { TOOL_USAGE_RULES } from './agent-prompts.js';
+import { SINGLE_OWNER_TRUST_NOTE, TOOL_USAGE_RULES } from './agent-prompts.js';
 import type { AgentInput, AgentResponse } from './agent.types.js';
 
 const SPACE_LABELS: Record<string, string> = {
@@ -19,6 +19,7 @@ const SYSTEM_PROMPT_PREFIX = (displayName: string, spaceLabel: string, timeConte
   `dans le contexte "${spaceLabel}". Tu n'as accès à aucune information personnelle ` +
   "de l'utilisateur. Réponds de façon concise et professionnelle. " +
   `${timeContext} ` +
+  `${SINGLE_OWNER_TRUST_NOTE} ` +
   TOOL_USAGE_RULES;
 
 const VOICE_INTERRUPTION_NOTE =
