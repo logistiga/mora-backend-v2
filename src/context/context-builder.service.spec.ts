@@ -189,4 +189,19 @@ describe('ContextBuilderService', () => {
     // The oversized facts block must never be force-included past budget.
     expect(result.messages.some((m) => m.content.includes('v'.repeat(200)))).toBe(false);
   });
+
+  it('includes retrieved memories even when the fixed system prompt is long (regression: the prompt used to eat the same budget)', async () => {
+    const ctx = buildService(2000);
+    ctx.memoryRetrievalServiceMock.retrieve.mockResolvedValue({
+      mode: 'semantic',
+      memories: [{ kind: 'person', content: 'Sa fille Chahd est née le 6 février 2015', importance: 0.8, confidence: 0.8 }],
+      durationMs: 1,
+    });
+
+    // A system prompt long enough that, under the old "count it against the budget" behaviour,
+    // it alone would have left no room for the memory below (2000-char budget).
+    const result = await ctx.service.build({ ...baseParams, systemPrompt: 'Tu es Mora. '.repeat(200) });
+
+    expect(result.messages.some((m) => m.content.includes('Chahd est née le 6 février 2015'))).toBe(true);
+  });
 });

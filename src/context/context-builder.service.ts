@@ -115,7 +115,14 @@ export class ContextBuilderService {
       // own doc comment for why call sites previously drifted apart).
       { role: 'system', content: LANGUAGE_POLICY_INSTRUCTION },
     ];
-    let usedChars = params.systemPrompt.length + UNTRUSTED_CONTENT_GUARD.length + LANGUAGE_POLICY_INSTRUCTION.length;
+    // The three system messages above are fixed overhead: always sent regardless of what gets
+    // retrieved. They used to be counted against this same budget, so a longer system prompt
+    // (adding one clarifying sentence to an agent's instructions, say) silently left less room
+    // for memories/documents/history — to the point of dropping the whole memories block with
+    // no trace besides a "Context built" log line that still reported what was *retrieved*,
+    // not what actually made it into the prompt. The budget now covers only what competes for
+    // it: retrieved and historical content.
+    let usedChars = 0;
 
     const pushIfBudgetAllows = (content: string): boolean => {
       if (usedChars + content.length > this.budgetChars) return false;
@@ -153,13 +160,15 @@ export class ContextBuilderService {
       usedSummary = pushIfBudgetAllows(`Résumé de la conversation jusqu'ici : ${summary.summary}`);
     }
 
+    let memoriesIncluded = false;
     if (retrieval.memories.length > 0) {
       const memoriesText =
         'Souvenirs pertinents :\n' +
         retrieval.memories.map((m) => `- (${m.kind}) ${m.content}`).join('\n');
-      pushIfBudgetAllows(memoriesText);
+      memoriesIncluded = pushIfBudgetAllows(memoriesText);
     }
 
+    let documentsIncluded = false;
     // Document extracts (Phase E §18/§19): each snippet carries a citation
     // (title + page/section when known) so the agent can attribute an
     // answer to its source ("Source : Rapport Rotor — page 12") — the
@@ -173,7 +182,7 @@ export class ContextBuilderService {
             return `- [Source : ${c.documentTitle}${location ? ` — ${location}` : ''}] ${c.content.slice(0, 500)}`;
           })
           .join('\n');
-      pushIfBudgetAllows(documentsText);
+      documentsIncluded = pushIfBudgetAllows(documentsText);
     }
 
     for (const note of params.externalContextNotes ?? []) {
@@ -198,7 +207,9 @@ export class ContextBuilderService {
     messages.push(...keptTurns);
 
     this.logger.debug(
-      `Context built: ${messages.length} messages, ${usedChars} chars, retrieval=${retrieval.mode} (${retrieval.durationMs}ms), memories=${retrieval.memories.length}, docRetrieval=${documentRetrieval.mode} (${documentRetrieval.durationMs}ms), documents=${documentRetrieval.chunks.length}`,
+      `Context built: ${messages.length} messages, ${usedChars} chars, retrieval=${retrieval.mode} (${retrieval.durationMs}ms), ` +
+        `memories=${retrieval.memories.length} included=${memoriesIncluded}, docRetrieval=${documentRetrieval.mode} (${documentRetrieval.durationMs}ms), ` +
+        `documents=${documentRetrieval.chunks.length} included=${documentsIncluded}`,
     );
 
     return {
