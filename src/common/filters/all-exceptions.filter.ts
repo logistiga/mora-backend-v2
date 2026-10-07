@@ -97,7 +97,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (maybeMessage) return maybeMessage;
     }
     if (typeof exceptionResponse === 'string') return exceptionResponse;
-    if (exception instanceof Error) return exception.message;
+    // Reached only for a raw (non-HttpException) error, i.e. an unexpected 500: its message can
+    // contain internal detail (a Prisma error, a file path, a third-party API's raw response).
+    // That detail is logged above for us, but it must never reach the client.
     return 'Internal server error';
   }
 }
