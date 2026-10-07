@@ -453,14 +453,19 @@ export class MoraOrchestratorService {
       return decision;
     }
 
+    // Same rule as MoraRouterService.buildResult: "personal" only ever has the "personal"
+    // space. A stale row recorded before that normalization existed could otherwise carry a
+    // non-personal space forward into every later turn of this conversation via continuity.
+    const space = active.scope === 'personal' ? 'personal' : active.space;
+
     this.logger.debug(
-      `Conversation continuity: "${decision.route}" turn continued as ${active.scope}/${active.space}`,
+      `Conversation continuity: "${decision.route}" turn continued as ${active.scope}/${space}`,
     );
     return {
       ...decision,
       route: active.scope as RouterDecisionResult['route'],
       scope: active.scope as RouterDecisionResult['scope'],
-      space: active.space as RouterDecisionResult['space'],
+      space: space as RouterDecisionResult['space'],
       method: 'continuity',
     };
   }
