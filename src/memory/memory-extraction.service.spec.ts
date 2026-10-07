@@ -372,4 +372,81 @@ describe('MemoryExtractionService', () => {
       );
     });
   });
+
+  describe('proposeCandidatesFromDocument', () => {
+    it('returns nothing for empty text without calling the LLM', async () => {
+      const result = await ctx.service.proposeCandidatesFromDocument('   ', { userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md' });
+
+      expect(result).toEqual([]);
+      expect(ctx.llmServiceMock.complete).not.toHaveBeenCalled();
+    });
+
+    it('returns nothing when no LLM is configured', async () => {
+      const result = await ctx.service.proposeCandidatesFromDocument('Some document text.', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md',
+      });
+
+      expect(result).toEqual([]);
+    });
+
+    it('parses up to 15 memory candidates from a configured LLM, dropping malformed ones', async () => {
+      const many = Array.from({ length: 20 }, (_, i) => `{"kind":"fact","content":"fact ${i}","importance":0.5,"confidence":0.5}`);
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: `{"memories":[${many.join(',')}, {"kind":"not_a_kind","content":"x"}, {"content":"no kind"}]}`,
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('Long document…', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'memoire.md',
+      });
+
+      expect(result).toHaveLength(15);
+      expect(result[0]).toMatchObject({ kind: 'fact', content: 'fact 0' });
+    });
+
+    it('drops a candidate whose content contains a secret-shaped value', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '{"memories":[{"kind":"fact","content":"API key: sk-live-aBcDeFgHiJkLmNoPqRsTuVwXyZ123456","importance":0.5,"confidence":0.5}]}',
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('text', { userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md' });
+
+      expect(result).toEqual([]);
+    });
+
+    it('truncates very long documents before sending them to the model', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({ configured: true, content: '{"memories":[]}', provider: 'p', model: 'm' });
+
+      await ctx.service.proposeCandidatesFromDocument('x'.repeat(50_000), {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'big.md',
+      });
+
+      const call = ctx.llmServiceMock.complete.mock.calls[0] as unknown as [{ messages: { content: string }[] }];
+      const sentContent = call[0].messages[1].content;
+      expect(sentContent.length).toBeLessThan(13_000);
+    });
+  });
+
+  describe('commitCandidates — document source', () => {
+    it('tags created memories with source "document" when given', async () => {
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc-1',
+        candidates: [{ kind: 'fact', content: 'Une information du document', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ content: 'Une information du document' }),
+        'document',
+        'doc-1',
+      );
+    });
+  });
 });

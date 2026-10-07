@@ -14,7 +14,7 @@ export type MemoryKind =
   | 'habit';
 
 export type MemoryStatus = 'active' | 'pending' | 'archived' | 'superseded';
-export type MemorySource = 'manual' | 'extraction';
+export type MemorySource = 'manual' | 'extraction' | 'document';
 
 export const MEMORY_KINDS: MemoryKind[] = [
   'fact',

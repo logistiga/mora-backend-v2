@@ -6,7 +6,13 @@ import { EntitiesService } from './entities.service.js';
 import { MemoryService } from './memory.service.js';
 import { ProfileFactsService } from './profile-facts.service.js';
 import type { CreateMemoryDto } from './dto/create-memory.dto.js';
-import { MEMORY_KINDS, type EssentialFactCandidate, type MemoryCandidate, type MemoryKind } from './memory.types.js';
+import {
+  MEMORY_KINDS,
+  type EssentialFactCandidate,
+  type MemoryCandidate,
+  type MemoryKind,
+  type MemorySource,
+} from './memory.types.js';
 
 const ENTITY_KIND_TYPES = new Set(['person', 'company']);
 
@@ -16,6 +22,25 @@ const TRIVIAL_PATTERN =
   /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|merci beaucoup|ok|d'accord|oui|non|parfait|très bien|super|cool|au revoir|à bientôt)\W*$/i;
 const MIN_WORD_COUNT = 4;
 const MAX_ESSENTIAL_CANDIDATES = 2;
+// A document can describe far more durable facts than one conversation turn, and there is
+// no per-message cadence limiting how often this runs (once per document, not per message).
+const MAX_DOCUMENT_MEMORIES = 15;
+// Budget in characters, not tokens, but close enough to keep the call's cost bounded — a
+// document's first ~12k characters are extracted from, not the whole file for a huge one.
+const DOCUMENT_TEXT_BUDGET = 12_000;
+
+const DOCUMENT_EXTRACTION_SYSTEM_PROMPT =
+  "Tu identifies les informations DURABLES et utiles à mémoriser dans un document que l'utilisateur " +
+  'vient d\'ajouter, pour pouvoir répondre à ses questions plus tard SANS avoir à rouvrir le document. ' +
+  'Réponds UNIQUEMENT avec un objet JSON de la forme {"memories": [...]}. Aucun texte hors de ce JSON.\n\n' +
+  `"memories" (0 à ${MAX_DOCUMENT_MEMORIES} éléments) : faits durables — personnes, sociétés, dates, ` +
+  'décisions, tarifs, coordonnées, procédures, préférences, projets. Forme : {"kind": "...", "content": ' +
+  '"phrase autonome et factuelle, compréhensible sans relire le document", "importance": 0-1, "confidence": ' +
+  `0-1}. "kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}.\n\n` +
+  "Ignore le texte générique, les instructions de mise en forme, et tout ce qui n'apporte rien à retenir. " +
+  "Si le document signale lui-même qu'une information est ancienne, incertaine, une simple proposition ou à " +
+  'vérifier, reflète cette réserve dans le contenu plutôt que de la présenter comme un fait acquis. ' +
+  'Si rien ne mérite d\'être retenu, réponds {"memories":[]}.';
 
 const EXTRACTION_SYSTEM_PROMPT =
   'Tu identifies les informations DURABLES et utiles à mémoriser dans un échange entre un ' +
@@ -105,6 +130,50 @@ export class MemoryExtractionService {
     return this.parseCandidates(response.content);
   }
 
+  /**
+   * Same idea as `proposeCandidates`, but for a whole document instead of one
+   * conversation turn: no triviality/word-count gate (a document is always
+   * worth looking at), a much higher candidate cap, and a prompt written for
+   * a standalone document rather than a dialogue exchange.
+   */
+  async proposeCandidatesFromDocument(
+    text: string,
+    context: { userId: string; scope: string; space: string; filename: string },
+  ): Promise<MemoryCandidate[]> {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          { role: 'system', content: DOCUMENT_EXTRACTION_SYSTEM_PROMPT },
+          { role: 'user', content: `Document : ${context.filename}\n\n${trimmed.slice(0, DOCUMENT_TEXT_BUDGET)}` },
+        ],
+        temperature: 0,
+        maxTokens: 1800,
+      },
+      { userId: context.userId, scope: context.scope, space: context.space, route: 'memory-extraction-document' },
+    );
+
+    if (!response.configured) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(response.content) as unknown;
+      const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+      return (Array.isArray(obj.memories) ? obj.memories : [])
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => this.coerceMemoryCandidate(item))
+        .filter((c): c is MemoryCandidate => c !== null)
+        .filter((c) => !containsSecret(c.content))
+        .slice(0, MAX_DOCUMENT_MEMORIES);
+    } catch (error) {
+      this.logger.warn(`Document memory extraction returned unparsable output: ${String(error)}`);
+      return [];
+    }
+  }
+
   private parseCandidates(raw: string): { memories: MemoryCandidate[]; essentialFacts: EssentialFactCandidate[] } {
     try {
       const parsed = JSON.parse(raw) as unknown;
@@ -168,7 +237,9 @@ export class MemoryExtractionService {
     space: string;
     sourceMessageId: string;
     candidates: MemoryCandidate[];
+    source?: MemorySource;
   }): Promise<void> {
+    const source = params.source ?? 'extraction';
     for (const candidate of params.candidates) {
       const dto: CreateMemoryDto = {
         scope: params.scope,
@@ -193,7 +264,7 @@ export class MemoryExtractionService {
           params.userId,
           existing.id,
           dto,
-          'extraction',
+          source,
           params.sourceMessageId,
         );
         memoryId = replacement.id;
@@ -201,7 +272,7 @@ export class MemoryExtractionService {
         const created = await this.memoryService.create(
           params.userId,
           dto,
-          'extraction',
+          source,
           params.sourceMessageId,
         );
         memoryId = created.id;
