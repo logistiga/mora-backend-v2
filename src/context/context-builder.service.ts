@@ -163,7 +163,10 @@ export class ContextBuilderService {
     let memoriesIncluded = false;
     if (retrieval.memories.length > 0) {
       const memoriesText =
-        'Souvenirs pertinents :\n' +
+        'Souvenirs pertinents : lis CHAQUE ligne avant de répondre, y compris les détails entre ' +
+        "parenthèses (une liste peut regrouper plusieurs personnes ou dates dans une seule ligne). " +
+        "Si l'information demandée s'y trouve, même partiellement, utilise-la — ne dis jamais que " +
+        "tu ne l'as pas sans avoir vérifié chaque ligne ci-dessous.\n" +
         retrieval.memories.map((m) => `- (${m.kind}) ${m.content}`).join('\n');
       memoriesIncluded = pushIfBudgetAllows(memoriesText);
     }
