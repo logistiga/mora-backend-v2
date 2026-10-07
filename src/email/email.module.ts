@@ -1,8 +1,12 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
 import { AuditModule } from '../audit/audit.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
+import { MemoryModule } from '../memory/memory.module.js';
+import { EMAIL_SYNC_QUEUE } from './email-sync.constants.js';
+import { EmailSyncProcessor } from './email-sync.processor.js';
 import { EmailAccountService } from './email-account.service.js';
 import { EmailController } from './email.controller.js';
 import { EmailMessageService } from './email-message.service.js';
@@ -12,7 +16,15 @@ import { EMAIL_PROVIDER } from './providers/email-provider.token.js';
 import { GoogleModule } from '../google/google.module.js';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'jwt-access' }), AiProvidersModule, ContactsModule, AuditModule, GoogleModule],
+  imports: [
+    PassportModule.register({ defaultStrategy: 'jwt-access' }),
+    AiProvidersModule,
+    ContactsModule,
+    AuditModule,
+    GoogleModule,
+    MemoryModule,
+    BullModule.registerQueue({ name: EMAIL_SYNC_QUEUE }),
+  ],
   controllers: [EmailController],
   providers: [
     ImapSmtpEmailProvider,
@@ -20,6 +32,7 @@ import { GoogleModule } from '../google/google.module.js';
     { provide: EMAIL_PROVIDER, useExisting: EmailProviderRouter },
     EmailAccountService,
     EmailMessageService,
+    EmailSyncProcessor,
   ],
   exports: [EmailAccountService, EmailMessageService, EMAIL_PROVIDER],
 })

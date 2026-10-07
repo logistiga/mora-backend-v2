@@ -5,6 +5,7 @@ import { ContactService } from '../contacts/contact.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import type { EmailMessage } from '../generated/prisma/client.js';
 import { EmailAccountService } from './email-account.service.js';
+import { MemoryExtractionService } from '../memory/memory-extraction.service.js';
 import type { EmailProviderInterface, FetchedEmail } from './providers/email-provider.interface.js';
 import { EMAIL_PROVIDER } from './providers/email-provider.token.js';
 
@@ -33,8 +34,30 @@ export class EmailMessageService {
     private readonly contactService: ContactService,
     private readonly accountService: EmailAccountService,
     private readonly auditService: AuditService,
+    private readonly memoryExtraction: MemoryExtractionService,
     @Inject(EMAIL_PROVIDER) private readonly provider: EmailProviderInterface,
   ) {}
+
+  /** The e-mail itself, read as a short document, for durable-fact extraction. */
+  private async extractMemory(userId: string, scope: string, space: string, email: FetchedEmail): Promise<void> {
+    if (scope !== 'personal' && scope !== 'professional') return;
+    const text = [email.subject, email.textBody].filter(Boolean).join('\n\n');
+    const candidates = await this.memoryExtraction.proposeCandidatesFromDocument(text, {
+      userId,
+      scope,
+      space,
+      filename: `e-mail: ${email.subject || '(sans objet)'}`,
+    });
+    if (candidates.length === 0) return;
+    await this.memoryExtraction.commitCandidates({
+      userId,
+      scope,
+      space,
+      sourceMessageId: email.providerMessageId,
+      candidates,
+      source: 'document',
+    });
+  }
 
   async syncInbound(userId: string, accountId: string): Promise<number> {
     const connection = await this.accountService.resolveConnection(accountId);
@@ -91,6 +114,13 @@ export class EmailMessageService {
     await this.prisma.emailThread.update({ where: { id: thread.id }, data: { lastMessageAt: email.receivedAt } });
     await this.contactService.touchLastInteraction(contact.id);
     await this.auditService.log({ userId, action: 'email_message_received', scope: DEFAULT_SCOPE, space: DEFAULT_SPACE, metadata: { threadId: thread.id } });
+
+    // Best-effort, like document extraction: an inbound e-mail is also read for durable facts
+    // (dates, decisions, amounts, requests) so Mora can answer from it directly later, without
+    // the user having to point her back at this specific e-mail.
+    await this.extractMemory(userId, thread.scope, thread.space, email).catch((error: unknown) => {
+      this.logger.warn(`Memory extraction failed for e-mail ${message.id}: ${String(error)}`);
+    });
 
     return message;
   }
