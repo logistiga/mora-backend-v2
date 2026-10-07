@@ -160,7 +160,7 @@ export class MemoryExtractionService {
     }
 
     try {
-      const parsed = JSON.parse(response.content) as unknown;
+      const parsed = JSON.parse(stripCodeFence(response.content)) as unknown;
       const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
       return (Array.isArray(obj.memories) ? obj.memories : [])
         .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
@@ -176,7 +176,7 @@ export class MemoryExtractionService {
 
   private parseCandidates(raw: string): { memories: MemoryCandidate[]; essentialFacts: EssentialFactCandidate[] } {
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = JSON.parse(stripCodeFence(raw)) as unknown;
       const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 
       const memories = (Array.isArray(obj.memories) ? obj.memories : [])
@@ -331,6 +331,11 @@ export class MemoryExtractionService {
       update: {},
     });
   }
+}
+
+/** Some models wrap their JSON answer in a ```json fence despite being told not to; strip it before parsing. */
+function stripCodeFence(raw: string): string {
+  return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
 }
 
 function clamp01(value: number): number {

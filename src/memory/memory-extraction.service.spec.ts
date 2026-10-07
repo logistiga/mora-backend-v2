@@ -105,6 +105,22 @@ describe('MemoryExtractionService', () => {
       expect(result.essentialFacts).toEqual([]);
     });
 
+    it('parses candidates even when the model wraps its JSON in a ```json code fence', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '```json\n' + JSON.stringify({ memories: [{ kind: 'fact', content: 'Fait utile', importance: 0.6, confidence: 0.6 }], essentialFacts: [] }) + '\n```',
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('Un message assez long pour être considéré', 'Réponse.', {
+        userId: 'u1', scope: 'personal', space: 'personal',
+      });
+
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].content).toBe('Fait utile');
+    });
+
     it('returns no candidates when the LLM output is not valid JSON', async () => {
       ctx.llmServiceMock.complete.mockResolvedValue({
         configured: true,
@@ -387,6 +403,21 @@ describe('MemoryExtractionService', () => {
       });
 
       expect(result).toEqual([]);
+    });
+
+    it('parses candidates even when the model wraps its JSON in a ```json code fence', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '```json\n{"memories":[{"kind":"fact","content":"Née le 6 février 2015","importance":0.6,"confidence":0.6}]}\n```',
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('texte du document', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('Née le 6 février 2015');
     });
 
     it('parses up to 15 memory candidates from a configured LLM, dropping malformed ones', async () => {
