@@ -354,10 +354,16 @@ export class MoraRouterService {
     confidence: number;
     method: RouterDecisionResult['method'];
   }): RouterDecisionResult {
+    // "personal" only ever has the "personal" space — never "general" or a professional
+    // space name. The LLM fallback sometimes returns one anyway; forcing it here, for every
+    // route this method ever builds, stops a personal fact from being filed (or looked up)
+    // under the wrong space and becoming invisible to retrieval.
+    const space = params.scope === 'personal' ? 'personal' : params.space;
+
     return {
       route: params.route,
       scope: params.scope,
-      space: params.space,
+      space,
       intent: params.intent,
       complexity: this.detectComplexity(params.text),
       securityLevel: this.detectSecurityLevel(params.text, params.route),

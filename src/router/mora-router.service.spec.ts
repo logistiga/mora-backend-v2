@@ -193,6 +193,22 @@ describe('MoraRouterService', () => {
     await service.classify('Bonjour');
     expect(llmServiceMock.complete).not.toHaveBeenCalled();
   });
+
+  it('forces the "personal" space even when the LLM fallback returns a professional space for a personal route', async () => {
+    llmServiceMock.complete.mockResolvedValue({
+      configured: true,
+      content: JSON.stringify({ route: 'personal', space: 'general', intent: 'remind me of a birthday', confidence: 0.9 }),
+      provider: 'test', model: 'test-model',
+    });
+
+    const ambiguous = 'Considérant la situation actuelle et les circonstances environnantes qui évoluent';
+    const result = await service.classify(ambiguous);
+
+    expect(result.method).toBe('llm-fallback');
+    expect(result.scope).toBe('personal');
+    expect(result.space).toBe('personal');
+  });
+
   describe('user-data questions never land on the tool-less direct route', () => {
     it.each([
       "Qu'est-ce que tu sais sur moi ?",
