@@ -277,6 +277,19 @@ export class MemoryExtractionService {
         candidate.content,
       );
 
+      // A near-duplicate restatement that drops detail the existing memory already has (most
+      // often dates, amounts, phone numbers — digits) must never supersede it: this happened
+      // for real — a document/e-mail casually re-mentioning "trois enfants : Chahd, Bilal et
+      // Yassin" matched and overwrote a memory that specifically had each child's birth date,
+      // permanently losing it. A genuine update (a corrected date, say) still has its own
+      // digits and goes through normally; only a strictly less-specific rewrite is skipped.
+      if (existing && countDigits(candidate.content) < countDigits(existing.content)) {
+        this.logger.debug(
+          `Skipped superseding a more detailed memory with a less detailed one (kind=${candidate.kind})`,
+        );
+        continue;
+      }
+
       let memoryId: string;
       if (existing) {
         const { replacement } = await this.memoryService.supersede(
@@ -355,6 +368,11 @@ export class MemoryExtractionService {
 /** Some models wrap their JSON answer in a ```json fence despite being told not to; strip it before parsing. */
 function stripCodeFence(raw: string): string {
   return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+}
+
+/** How much concrete, checkable detail a memory carries — a cheap proxy that catches the case that matters: dates, amounts, phone numbers. */
+function countDigits(content: string): number {
+  return (content.match(/\d/g) ?? []).length;
 }
 
 function clamp01(value: number): number {

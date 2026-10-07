@@ -14,7 +14,7 @@ function buildService() {
     ),
   };
   const memoryServiceMock = {
-    findSupersessionCandidate: vi.fn(async (): Promise<{ id: string } | null> => null),
+    findSupersessionCandidate: vi.fn(async (): Promise<{ id: string; content: string } | null> => null),
     create: vi.fn(async () => ({ id: 'created-1' })),
     supersede: vi.fn(async () => ({ old: { id: 'old' }, replacement: { id: 'new' } })),
   };
@@ -339,6 +339,40 @@ describe('MemoryExtractionService', () => {
       );
     });
 
+    it('never supersedes a memory with a less detailed restatement that would lose its dates (regression: a real family fact lost its children’s birth dates this way)', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({
+        id: 'detailed-1',
+        content: 'Omar a une épouse, Jinane El Bouch, née le 7 août 1987, et trois enfants : Chahd (née le 6 février 2015), Bilal (né le 16 mars 2017) et Yassin (né le 13 mai 2024).',
+      });
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Omar a une épouse, Jinane El Bouch, et trois enfants : Chahd, Bilal et Yassin.', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.supersede).not.toHaveBeenCalled();
+      expect(ctx.memoryServiceMock.create).not.toHaveBeenCalled();
+    });
+
+    it('still supersedes when the new version has at least as much digit detail as the one it replaces', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-1', content: 'Née le 6 février 2015' });
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Née le 6 février 2016 (date corrigée)', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.supersede).toHaveBeenCalledOnce();
+    });
+
     it('a candidate without its own scope keeps the batch scope and space', async () => {
       ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue(null);
 
@@ -360,7 +394,7 @@ describe('MemoryExtractionService', () => {
     });
 
     it('supersedes an existing similar memory instead of duplicating it', async () => {
-      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-memory' });
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-memory', content: 'Préfère les rappels longs' });
 
       await ctx.service.commitCandidates({
         userId: 'u1',
