@@ -35,8 +35,13 @@ const DOCUMENT_EXTRACTION_SYSTEM_PROMPT =
   'Réponds UNIQUEMENT avec un objet JSON de la forme {"memories": [...]}. Aucun texte hors de ce JSON.\n\n' +
   `"memories" (0 à ${MAX_DOCUMENT_MEMORIES} éléments) : faits durables — personnes, sociétés, dates, ` +
   'décisions, tarifs, coordonnées, procédures, préférences, projets. Forme : {"kind": "...", "content": ' +
-  '"phrase autonome et factuelle, compréhensible sans relire le document", "importance": 0-1, "confidence": ' +
-  `0-1}. "kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}.\n\n` +
+  '"phrase autonome et factuelle, compréhensible sans relire le document", "scope": "personal|professional", ' +
+  `"importance": 0-1, "confidence": 0-1}. "kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}.\n\n` +
+  '"scope" classe CE FAIT PRÉCIS par ce qu\'il dit, jamais par le classement du document dans son ensemble : ' +
+  'un document professionnel peut contenir un fait personnel (famille, santé, voyage privé) et l\'inverse. ' +
+  'Un fait sur la famille, la santé, un loisir ou un bien personnel est "personal" même dans un document ' +
+  'professionnel ; un fait sur une société, un client, un tarif ou une procédure de travail est ' +
+  '"professional" même dans un document personnel.\n\n' +
   "Ignore le texte générique, les instructions de mise en forme, et tout ce qui n'apporte rien à retenir. " +
   "Si le document signale lui-même qu'une information est ancienne, incertaine, une simple proposition ou à " +
   'vérifier, reflète cette réserve dans le contenu plutôt que de la présenter comme un fait acquis. ' +
@@ -205,11 +210,18 @@ export class MemoryExtractionService {
     const content = typeof item.content === 'string' ? item.content.trim() : '';
     if (!kind || !content) return null;
 
+    // Only meaningful for a document/e-mail extraction (see proposeCandidatesFromDocument):
+    // the model classifies each fact by what it actually says, not by whatever scope the
+    // document happened to be filed under — a personal fact filed as "professional" (or the
+    // reverse) must still end up where the user will actually look for it.
+    const scope = item.scope === 'personal' || item.scope === 'professional' ? item.scope : undefined;
+
     return {
       kind,
       content,
       importance: clamp01(typeof item.importance === 'number' ? item.importance : 0.5),
       confidence: clamp01(typeof item.confidence === 'number' ? item.confidence : 0.5),
+      scope,
     };
   }
 
@@ -241,9 +253,16 @@ export class MemoryExtractionService {
   }): Promise<void> {
     const source = params.source ?? 'extraction';
     for (const candidate of params.candidates) {
+      // The fact's own scope wins over the batch's (e.g. a document filed as "professional"
+      // can still contain a personal fact). "personal" only ever has the "personal" space;
+      // a scope flip into "professional" without more information falls back to "general"
+      // rather than keeping a personal-only space value like "personal" or "code".
+      const scope = candidate.scope ?? params.scope;
+      const space = scope === 'personal' ? 'personal' : scope === params.scope ? params.space : 'general';
+
       const dto: CreateMemoryDto = {
-        scope: params.scope,
-        space: params.space,
+        scope,
+        space,
         kind: candidate.kind,
         content: candidate.content,
         importance: candidate.importance,
@@ -252,8 +271,8 @@ export class MemoryExtractionService {
 
       const existing = await this.memoryService.findSupersessionCandidate(
         params.userId,
-        params.scope,
-        params.space,
+        scope,
+        space,
         candidate.kind,
         candidate.content,
       );
@@ -279,7 +298,7 @@ export class MemoryExtractionService {
       }
 
       if (ENTITY_KIND_TYPES.has(candidate.kind)) {
-        await this.linkEntity(params.userId, params.scope, params.space, candidate, memoryId);
+        await this.linkEntity(params.userId, scope, space, candidate, memoryId);
       }
     }
   }

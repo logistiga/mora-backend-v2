@@ -319,6 +319,46 @@ describe('MemoryExtractionService', () => {
       expect(ctx.memoryServiceMock.supersede).not.toHaveBeenCalled();
     });
 
+    it("a candidate's own scope overrides the batch scope, and forces the personal space when personal", async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue(null);
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'professional',
+        space: 'code',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Sa fille Chahd est née le 6 février 2015', importance: 0.8, confidence: 0.8, scope: 'personal' }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ scope: 'personal', space: 'personal' }),
+        'document',
+        'doc1',
+      );
+    });
+
+    it('a candidate without its own scope keeps the batch scope and space', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue(null);
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'professional',
+        space: 'logistiga',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'fact', content: 'Tarif chariot élévateur : 230 000 FCFA / shift', importance: 0.6, confidence: 0.6 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ scope: 'professional', space: 'logistiga' }),
+        'document',
+        'doc1',
+      );
+    });
+
     it('supersedes an existing similar memory instead of duplicating it', async () => {
       ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-memory' });
 

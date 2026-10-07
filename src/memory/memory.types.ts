@@ -37,6 +37,8 @@ export interface MemoryCandidate {
   content: string;
   importance: number; // 0..1
   confidence: number; // 0..1
+  /** Only set by document/e-mail extraction: the fact's own scope, independent of where it was filed. */
+  scope?: MemoryScope;
 }
 
 /**
