@@ -7,12 +7,13 @@ function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
   const personalAgent = { handle: vi.fn() };
   const professionalAgent = { handle: vi.fn() };
   const conversationsService = {
-    getOrCreateConversation: vi.fn(async () => ({ id: 'conv-1' })),
+    getOrCreateConversation: vi.fn(async (): Promise<{ id: string; title: string | null }> => ({ id: 'conv-1', title: null })),
     addMessage: vi.fn(async ({ role }: { role: string }) => ({
       id: role === 'USER' ? 'user-msg-1' : 'assistant-msg-1',
     })),
     getScopedHistory: vi.fn(async () => []),
     getActiveScope: vi.fn(async () => null as { scope: string; space: string } | null),
+    setTitleIfMissing: vi.fn(async () => undefined),
   };
   const routerDecisionsService = { save: vi.fn() };
   const auditService = { log: vi.fn() };
@@ -411,6 +412,34 @@ describe('MoraOrchestratorService', () => {
     expect(ctx.memoryQueue.enqueueExtraction).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'personal', space: 'personal' }),
     );
+  });
+
+  it('titles an untitled conversation from the first message, once an LLM is configured', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'personal', scope: 'personal', space: 'personal', intent: 'task',
+      complexity: 'low', securityLevel: 'low', confidence: 0.85, method: 'rules',
+    });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'ok', metadata: {} });
+    ctx.llmService.complete.mockResolvedValue({ configured: true, content: 'Rendez-vous de demain', provider: 'p', model: null });
+
+    await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv de demain' });
+    await flushMicrotasks();
+
+    expect(ctx.conversationsService.setTitleIfMissing).toHaveBeenCalledWith('conv-1', 'Rendez-vous de demain');
+  });
+
+  it('never retitles a conversation that already has a title', async () => {
+    ctx.conversationsService.getOrCreateConversation.mockResolvedValue({ id: 'conv-1', title: 'Déjà nommée' });
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'personal', scope: 'personal', space: 'personal', intent: 'task',
+      complexity: 'low', securityLevel: 'low', confidence: 0.85, method: 'rules',
+    });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'ok', metadata: {} });
+
+    await ctx.service.handleMessage({ user, message: 'Autre chose' });
+    await flushMicrotasks();
+
+    expect(ctx.conversationsService.setTitleIfMissing).not.toHaveBeenCalled();
   });
 
   it('does not schedule a memory-extraction job for a direct reply', async () => {

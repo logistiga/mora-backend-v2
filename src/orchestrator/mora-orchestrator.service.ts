@@ -154,9 +154,15 @@ export class MoraOrchestratorService {
     // tool call is pending confirmation: nothing meaningfully "happened" in
     // the conversation yet worth extracting/summarizing.
     if ((decision.route === 'personal' || decision.route === 'professional') && !action) {
-      void this.scheduleBackgroundJobs(input.user.id, conversation.id, decision, userMessage.id, input.message, responseContent).catch(
-        (error) => this.logger.warn(`Failed to schedule Phase C background jobs: ${String(error)}`),
-      );
+      void this.scheduleBackgroundJobs(
+        input.user.id,
+        conversation.id,
+        conversation.title,
+        decision,
+        userMessage.id,
+        input.message,
+        responseContent,
+      ).catch((error) => this.logger.warn(`Failed to schedule Phase C background jobs: ${String(error)}`));
     }
 
     return {
@@ -580,12 +586,19 @@ export class MoraOrchestratorService {
   private async scheduleBackgroundJobs(
     userId: string,
     conversationId: string,
+    conversationTitle: string | null,
     decision: RouterDecisionResult,
     sourceMessageId: string,
     userMessage: string,
     assistantResponse: string,
   ): Promise<void> {
     const scope = decision.scope as 'personal' | 'professional';
+
+    if (!conversationTitle) {
+      await this.titleConversation(userId, conversationId, userMessage).catch((error: unknown) =>
+        this.logger.warn(`Conversation titling failed: ${String(error)}`),
+      );
+    }
 
     await this.memoryQueue.enqueueExtraction({
       userId,
@@ -600,5 +613,30 @@ export class MoraOrchestratorService {
     if (await this.conversationSummaryService.shouldSummarize(conversationId, scope, decision.space)) {
       await this.memoryQueue.enqueueSummary({ conversationId, userId, scope, space: decision.space });
     }
+  }
+
+  /** Best-effort, once per conversation: a short title from its first message, instead of "Conversation sans titre". */
+  private async titleConversation(userId: string, conversationId: string, userMessage: string): Promise<void> {
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Donne un titre très court (2 à 6 mots) qui résume ce message, pour une liste de conversations. ' +
+              'Pas de guillemets, pas de point final, pas de texte avant ou après le titre.',
+          },
+          { role: 'user', content: userMessage.slice(0, 500) },
+        ],
+        temperature: 0.3,
+        maxTokens: 20,
+      },
+      { userId, route: 'conversation-title' },
+    );
+    if (!response.configured) return;
+
+    const title = response.content.trim().replace(/^["'«»]+|["'«»]+$/g, '').slice(0, 80);
+    if (!title) return;
+    await this.conversationsService.setTitleIfMissing(conversationId, title);
   }
 }

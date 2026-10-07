@@ -13,6 +13,11 @@ export class ConversationsService {
     return this.prisma.conversation.create({ data: { userId, title } });
   }
 
+  /** Sets the title once: a `where: { title: null }` guard so two concurrent attempts never fight over it. */
+  async setTitleIfMissing(conversationId: string, title: string): Promise<void> {
+    await this.prisma.conversation.updateMany({ where: { id: conversationId, title: null }, data: { title } });
+  }
+
   /** Fetches a conversation, creating one if `conversationId` is omitted. Throws if the
    *  conversation exists but belongs to someone else — conversations never cross users. */
   async getOrCreateConversation(userId: string, conversationId?: string): Promise<Conversation> {
