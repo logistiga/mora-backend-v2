@@ -39,7 +39,7 @@ export class EmailMessageService {
   ) {}
 
   /** The e-mail itself, read as a short document, for durable-fact extraction. */
-  private async extractMemory(userId: string, scope: string, space: string, email: FetchedEmail): Promise<void> {
+  private async extractMemory(userId: string, scope: string, space: string, messageId: string, email: FetchedEmail): Promise<void> {
     if (scope !== 'personal' && scope !== 'professional') return;
     const text = [email.subject, email.textBody].filter(Boolean).join('\n\n');
     const candidates = await this.memoryExtraction.proposeCandidatesFromDocument(text, {
@@ -53,7 +53,9 @@ export class EmailMessageService {
       userId,
       scope,
       space,
-      sourceMessageId: email.providerMessageId,
+      // sourceId is a real uuid column; the provider's own message id is not one — the
+      // EmailMessage row's own id is used instead (see Memory.sourceId in the schema).
+      sourceMessageId: messageId,
       candidates,
       source: 'document',
     });
@@ -118,7 +120,7 @@ export class EmailMessageService {
     // Best-effort, like document extraction: an inbound e-mail is also read for durable facts
     // (dates, decisions, amounts, requests) so Mora can answer from it directly later, without
     // the user having to point her back at this specific e-mail.
-    await this.extractMemory(userId, thread.scope, thread.space, email).catch((error: unknown) => {
+    await this.extractMemory(userId, thread.scope, thread.space, message.id, email).catch((error: unknown) => {
       this.logger.warn(`Memory extraction failed for e-mail ${message.id}: ${String(error)}`);
     });
 
