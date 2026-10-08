@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mora": {
+      "command": "node",
+      "args": ["D:/xampp/htdocs/mora-backend-v2/tools/mcp-whatsapp/server.mjs"],
+      "env": {
+        "MORA_API_URL": "https://mora-v2-staging.logistiga.tech",
+        "MORA_API_KEY": "REPLACE_ME_WITH_A_REAL_MORA_API_KEY"
+      }
+    }
+  }
+}
