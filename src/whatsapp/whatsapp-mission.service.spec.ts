@@ -14,6 +14,8 @@ function activeMission(overrides: Record<string, unknown> = {}) {
     maxMessages: 10,
     deadlineAt: new Date(Date.now() + 60_000),
     findings: {},
+    scope: 'personal',
+    space: 'personal',
     ...overrides,
   };
 }
@@ -25,6 +27,7 @@ describe('parseTurn', () => {
       done: false,
       findings: {},
       report: null,
+      confirmedAt: null,
     });
   });
 
@@ -63,6 +66,8 @@ describe('WhatsAppMissionService.runTurn', () => {
   let messageService: { sendAndPersist: ReturnType<typeof vi.fn>; openConversationForContact: ReturnType<typeof vi.fn> };
   let llm: { complete: ReturnType<typeof vi.fn> };
   let notifications: { create: ReturnType<typeof vi.fn> };
+  let reminders: { create: ReturnType<typeof vi.fn> };
+  let timeContext: { describeNow: ReturnType<typeof vi.fn> };
   let service: WhatsAppMissionService;
 
   beforeEach(() => {
@@ -81,8 +86,18 @@ describe('WhatsAppMissionService.runTurn', () => {
     };
     llm = { complete: vi.fn(async () => ({ configured: true, content: '{"reply":"Quel jour ?","done":false,"findings":{}}' })) };
     notifications = { create: vi.fn(async () => ({})) };
+    reminders = { create: vi.fn(async () => ({ id: 'rem-1' })) };
+    timeContext = { describeNow: vi.fn(() => "Nous sommes le 2026-10-08T12:00:00.000Z.") };
     const queue = { add: vi.fn() };
-    service = new WhatsAppMissionService(prisma as never, messageService as never, llm as never, notifications as never, queue as never);
+    service = new WhatsAppMissionService(
+      prisma as never,
+      messageService as never,
+      llm as never,
+      notifications as never,
+      reminders as never,
+      timeContext as never,
+      queue as never,
+    );
   });
 
   it('sends the next message and counts it when the objective is not reached', async () => {
@@ -112,6 +127,43 @@ describe('WhatsAppMissionService.runTurn', () => {
       data: { status: 'done', report: 'RDV lundi, heure à confirmer.', findings: { 'Quelle date ?': 'lundi' } },
     });
     expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', type: 'whatsapp_mission' }));
+  });
+
+  it('auto-creates a reminder when the contact confirmed an exact future date/time', async () => {
+    const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    llm.complete.mockResolvedValue({
+      configured: true,
+      content: JSON.stringify({
+        reply: 'Parfait, à bientôt !',
+        done: true,
+        findings: { 'Quelle date ?': 'lundi 14h' },
+        report: 'RDV confirmé.',
+        confirmedAt: future,
+      }),
+    });
+
+    await service.runTurn('conv-1');
+
+    expect(reminders.create).toHaveBeenCalledWith(
+      'u1',
+      expect.objectContaining({ scope: 'personal', space: 'personal', title: 'RDV avec Mustapha', remindAt: future }),
+      'tool',
+      'conv-1',
+    );
+    expect(prisma.whatsAppMission.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ reminderId: 'rem-1' }) }),
+    );
+  });
+
+  it('does not create a reminder when confirmedAt is missing, in the past, or unparsable', async () => {
+    llm.complete.mockResolvedValue({
+      configured: true,
+      content: '{"reply":"Merci !","done":true,"findings":{},"report":"RDV à préciser.","confirmedAt":"pas une date"}',
+    });
+
+    await service.runTurn('conv-1');
+
+    expect(reminders.create).not.toHaveBeenCalled();
   });
 
   it('stops at the message limit without asking the model again', async () => {

@@ -4,8 +4,10 @@ import { PassportModule } from '@nestjs/passport';
 import { AiProvidersModule } from '../ai-providers/ai-providers.module.js';
 import { AuditModule } from '../audit/audit.module.js';
 import { ContactsModule } from '../contacts/contacts.module.js';
+import { TimeModule } from '../common/time/time.module.js';
 import { LlmModule } from '../llm/llm.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
+import { RemindersModule } from '../reminders/reminders.module.js';
 import { WHATSAPP_MISSION_QUEUE } from './whatsapp-mission.constants.js';
 import { WhatsAppMissionProcessor } from './whatsapp-mission.processor.js';
 import { WhatsAppMissionService } from './whatsapp-mission.service.js';
@@ -24,6 +26,8 @@ import { WhatsAppWebhookController } from './whatsapp-webhook.controller.js';
     AuditModule,
     LlmModule,
     NotificationsModule,
+    RemindersModule,
+    TimeModule,
     BullModule.registerQueue({ name: WHATSAPP_MISSION_QUEUE }),
   ],
   controllers: [WhatsAppController, WhatsAppWebhookController],

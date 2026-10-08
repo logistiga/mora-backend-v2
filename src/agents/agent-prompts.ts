@@ -62,7 +62,15 @@ export const TOOL_CHOICE_RULES =
   'REDIRE une information déjà connue (contexte de la conversation, document ou image ' +
   'analysée, mémoire) → réponds directement, n\'appelle jamais create_reminder. ' +
   '- create_task est réservé à une action à faire suivie dans une liste de tâches ' +
-  '("ajoute une tâche", "j\'ai à faire...", "il faut que je ...").';
+  '("ajoute une tâche", "j\'ai à faire...", "il faut que je ...").' +
+  ' - Sur WhatsApp, distingue bien les deux outils d\'envoi : "envoie un message à X disant..." ' +
+  '(un message ponctuel, le contenu est déjà fourni) → whatsapp_send_to_contact ou ' +
+  'whatsapp_send_message. En revanche toute demande qui implique de NÉGOCIER ou d\'OBTENIR ' +
+  'quelque chose du contact par échanges successifs — fixer un rendez-vous, obtenir une ' +
+  'confirmation, poser une ou plusieurs questions et attendre la ou les réponses — doit utiliser ' +
+  'whatsapp_start_mission, jamais un simple envoi de message : Mora doit rester en contact avec ' +
+  'le destinataire, tour après tour, jusqu\'à obtenir ce qui est demandé (ou un refus explicite), ' +
+  'pas seulement envoyer un premier message et considérer la tâche terminée.';
 
 /**
  * Correction (Phase D, post-review): real end-to-end testing with gpt-4o-mini

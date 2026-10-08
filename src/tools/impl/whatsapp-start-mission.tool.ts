@@ -80,6 +80,8 @@ export class WhatsAppStartMissionTool implements MoraTool<WhatsAppStartMissionIn
         objective: input.objective,
         questions: input.questions,
         openingMessage: input.openingMessage,
+        scope: context.scope,
+        space: context.space,
       });
       return { ok: true, data: { missionId: started.missionId, sentTo: resolved.target.name, numberLast4: resolved.target.numberLast4 } };
     } catch (error) {

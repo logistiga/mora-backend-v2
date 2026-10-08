@@ -1389,6 +1389,25 @@ model WhatsAppMission {
   deadlineAt     DateTime @map("deadline_at")
   findings       Json     @default("{}")
   report         String?
+  // Which scope/space started this mission (whatsapp_start_mission's
+  // allowedScopes is ['personal', 'professional']) — needed so a reminder
+  // auto-created from a confirmed appointment lands in the same scope the
+  // user was in, never crossing the personal/professional boundary.
+  // Defaulted for the rows that existed before this column: a mission
+  // predating this feature degrades to "personal", never silently to
+  // "professional" (no safe way to know, and "personal" is the harmless
+  // direction for an already-finished/historical mission).
+  scope          String   @default("personal")
+  space          String   @default("personal")
+  // Set from the model's own JSON turn ("confirmedAt") once both sides have
+  // agreed on an exact date/time — see WhatsAppMissionService.runTurn. Null
+  // until then, and never set at all if the mission ends without a firm
+  // date (e.g. objective wasn't an appointment, or the contact never committed).
+  confirmedAt    DateTime? @map("confirmed_at")
+  // Id of the Reminder auto-created from confirmedAt, if any — lets a repeat
+  // completion signal (should not normally happen, but defends against a
+  // retried job) detect it already created one instead of duplicating it.
+  reminderId     String?  @map("reminder_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
