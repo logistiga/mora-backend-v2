@@ -3,16 +3,17 @@ import type { AgentUser } from '../agents/agent.types.js';
 import { MoraOrchestratorService } from './mora-orchestrator.service.js';
 
 function buildService(overrides: { crossScopeEnabled?: boolean } = {}) {
-  const routerService = { classify: vi.fn() };
+  const routerService = { classify: vi.fn(), splitHybrid: vi.fn() };
   const personalAgent = { handle: vi.fn() };
   const professionalAgent = { handle: vi.fn() };
   const conversationsService = {
-    getOrCreateConversation: vi.fn(async () => ({ id: 'conv-1' })),
+    getOrCreateConversation: vi.fn(async (): Promise<{ id: string; title: string | null }> => ({ id: 'conv-1', title: null })),
     addMessage: vi.fn(async ({ role }: { role: string }) => ({
       id: role === 'USER' ? 'user-msg-1' : 'assistant-msg-1',
     })),
     getScopedHistory: vi.fn(async () => []),
     getActiveScope: vi.fn(async () => null as { scope: string; space: string } | null),
+    setTitleIfMissing: vi.fn(async () => undefined),
   };
   const routerDecisionsService = { save: vi.fn() };
   const auditService = { log: vi.fn() };
@@ -137,27 +138,68 @@ describe('MoraOrchestratorService', () => {
     expect(result.space).toBe('logistiga');
   });
 
-  it('blocks "hybrid" by default (cross-scope disabled) without calling any agent', async () => {
-    ctx.routerService.classify.mockResolvedValue({
-      route: 'hybrid',
-      scope: 'hybrid',
-      space: 'hybrid',
-      intent: 'task',
-      complexity: 'medium',
-      securityLevel: 'medium',
-      confidence: 0.7,
-      method: 'rules',
+  it.each([false, true])(
+    'never merges "hybrid" (cross-scope enabled=%s): asks to split, calls no agent',
+    async (crossScopeEnabled) => {
+      ctx = buildService({ crossScopeEnabled });
+      ctx.routerService.classify.mockResolvedValue({
+        route: 'hybrid',
+        scope: 'hybrid',
+        space: 'hybrid',
+        intent: 'task',
+        complexity: 'medium',
+        securityLevel: 'medium',
+        confidence: 0.7,
+        method: 'rules',
+      });
+
+      const result = await ctx.service.handleMessage({ user, message: 'perso + logistiga' });
+
+      expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
+      expect(ctx.professionalAgent.handle).not.toHaveBeenCalled();
+      expect(result.route).toBe('hybrid');
+      expect(result.response).toMatch(/deux messages distincts/i);
+      expect(ctx.auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({ metadata: expect.objectContaining({ crossScopeBlocked: true }) }),
+      );
+    },
+  );
+
+  it('splits a hybrid message (cross-scope enabled) and answers each part with its own agent', async () => {
+    ctx = buildService({ crossScopeEnabled: true });
+    ctx.routerService.classify.mockResolvedValueOnce({
+      route: 'hybrid', scope: 'hybrid', space: 'hybrid', intent: 'task', complexity: 'medium', securityLevel: 'medium', confidence: 0.7, method: 'rules',
     });
+    ctx.routerService.classify.mockResolvedValueOnce({
+      route: 'professional', scope: 'professional', space: 'logistiga', intent: 'question', complexity: 'low', securityLevel: 'medium', confidence: 0.9, method: 'rules',
+    });
+    ctx.routerService.splitHybrid.mockResolvedValue({ personal: 'Rappelle-moi mon rdv', professional: 'Statut Logistiga ?' });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'rdv demain', metadata: {} });
+    ctx.professionalAgent.handle.mockResolvedValue({ content: 'tout va bien', metadata: {} });
+
+    const result = await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv et statut Logistiga ?' });
+
+    expect(ctx.personalAgent.handle).toHaveBeenCalledWith(expect.objectContaining({ message: 'Rappelle-moi mon rdv' }));
+    expect(ctx.professionalAgent.handle).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Statut Logistiga ?', routerDecision: expect.objectContaining({ space: 'logistiga' }) }),
+    );
+    expect(result.response).toContain('rdv demain');
+    expect(result.response).toContain('tout va bien');
+    expect(result.route).toBe('hybrid');
+  });
+
+  it('asks the user to split when the LLM split is unavailable (cross-scope enabled)', async () => {
+    ctx = buildService({ crossScopeEnabled: true });
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'hybrid', scope: 'hybrid', space: 'hybrid', intent: 'task', complexity: 'medium', securityLevel: 'medium', confidence: 0.7, method: 'rules',
+    });
+    ctx.routerService.splitHybrid.mockResolvedValue(null);
 
     const result = await ctx.service.handleMessage({ user, message: 'perso + logistiga' });
 
     expect(ctx.personalAgent.handle).not.toHaveBeenCalled();
     expect(ctx.professionalAgent.handle).not.toHaveBeenCalled();
-    expect(result.route).toBe('hybrid');
-    expect(result.response).toMatch(/cross-scope est désactivé/i);
-    expect(ctx.auditService.log).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: expect.objectContaining({ crossScopeBlocked: true }) }),
-    );
+    expect(result.response).toMatch(/deux messages distincts/i);
   });
 
   it('answers a general "direct" question with a real LLM reply instead of "D\'accord."', async () => {
@@ -370,6 +412,34 @@ describe('MoraOrchestratorService', () => {
     expect(ctx.memoryQueue.enqueueExtraction).toHaveBeenCalledWith(
       expect.objectContaining({ scope: 'personal', space: 'personal' }),
     );
+  });
+
+  it('titles an untitled conversation from the first message, once an LLM is configured', async () => {
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'personal', scope: 'personal', space: 'personal', intent: 'task',
+      complexity: 'low', securityLevel: 'low', confidence: 0.85, method: 'rules',
+    });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'ok', metadata: {} });
+    ctx.llmService.complete.mockResolvedValue({ configured: true, content: 'Rendez-vous de demain', provider: 'p', model: null });
+
+    await ctx.service.handleMessage({ user, message: 'Rappelle-moi mon rdv de demain' });
+    await flushMicrotasks();
+
+    expect(ctx.conversationsService.setTitleIfMissing).toHaveBeenCalledWith('conv-1', 'Rendez-vous de demain');
+  });
+
+  it('never retitles a conversation that already has a title', async () => {
+    ctx.conversationsService.getOrCreateConversation.mockResolvedValue({ id: 'conv-1', title: 'Déjà nommée' });
+    ctx.routerService.classify.mockResolvedValue({
+      route: 'personal', scope: 'personal', space: 'personal', intent: 'task',
+      complexity: 'low', securityLevel: 'low', confidence: 0.85, method: 'rules',
+    });
+    ctx.personalAgent.handle.mockResolvedValue({ content: 'ok', metadata: {} });
+
+    await ctx.service.handleMessage({ user, message: 'Autre chose' });
+    await flushMicrotasks();
+
+    expect(ctx.conversationsService.setTitleIfMissing).not.toHaveBeenCalled();
   });
 
   it('does not schedule a memory-extraction job for a direct reply', async () => {

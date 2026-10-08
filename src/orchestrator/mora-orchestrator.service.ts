@@ -14,7 +14,7 @@ import { ProfileFactsService } from '../memory/profile-facts.service.js';
 import { detectScriptLanguage } from '../common/language/script-language.util.js';
 import { LANGUAGE_POLICY_INSTRUCTION, buildShortTurnLexicalSignalNote } from '../common/language/language-policy-prompt.js';
 import { MoraRouterService } from '../router/mora-router.service.js';
-import type { RouterDecisionResult } from '../router/router.types.js';
+import type { MoraSpace, ProfessionalSpace, RouterDecisionResult } from '../router/router.types.js';
 import { ToolExecutorService } from '../tools/tool-executor.service.js';
 import type { ToolContext, ToolScope } from '../tools/tool.types.js';
 
@@ -57,8 +57,8 @@ export interface OrchestratorResult {
 
 const HYBRID_BLOCKED_MESSAGE =
   'Votre demande mélange des éléments personnels et professionnels. ' +
-  "Le mode cross-scope est désactivé par défaut : merci de reformuler séparément " +
-  "la partie personnelle et la partie professionnelle.";
+  'Mora traite chaque espace séparément : merci de reformuler la partie personnelle et ' +
+  'la partie professionnelle dans deux messages distincts.';
 
 const REJECTION_MESSAGES: Record<string, string> = {
   unknown_tool: "Je ne dispose pas de cette action.",
@@ -154,9 +154,15 @@ export class MoraOrchestratorService {
     // tool call is pending confirmation: nothing meaningfully "happened" in
     // the conversation yet worth extracting/summarizing.
     if ((decision.route === 'personal' || decision.route === 'professional') && !action) {
-      void this.scheduleBackgroundJobs(input.user.id, conversation.id, decision, userMessage.id, input.message, responseContent).catch(
-        (error) => this.logger.warn(`Failed to schedule Phase C background jobs: ${String(error)}`),
-      );
+      void this.scheduleBackgroundJobs(
+        input.user.id,
+        conversation.id,
+        conversation.title,
+        decision,
+        userMessage.id,
+        input.message,
+        responseContent,
+      ).catch((error) => this.logger.warn(`Failed to schedule Phase C background jobs: ${String(error)}`));
     }
 
     return {
@@ -190,15 +196,7 @@ export class MoraOrchestratorService {
         this.logger.debug('Hybrid request blocked: cross-scope is disabled');
         return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true } };
       }
-      // Cross-scope is explicitly enabled, but Phase B/C do not implement real
-      // hybrid merging (Personal+Professional combined context/actions) — that
-      // is out of scope here. Degrade safely rather than fabricate a merge.
-      return {
-        content:
-          "Le mode cross-scope est activé mais le traitement hybride combiné n'est pas " +
-          'encore implémenté (prévu à une phase ultérieure). Merci de reformuler séparément.',
-        metadata: { agent: 'hybrid', crossScopeBlocked: false, notImplemented: true },
-      };
+      return this.dispatchSplitHybrid(user, message, conversationId, channel, recentInterruption, externalContextNotes);
     }
 
     const scope = decision.route as ToolScope; // 'personal' | 'professional' only past this point
@@ -224,6 +222,93 @@ export class MoraOrchestratorService {
           });
 
     return this.resolveAgentResponse(user, message, decision, conversationId, scope, agentResponse);
+  }
+
+  /**
+   * Hybrid requests are split, never merged: each part goes to its own agent
+   * with its own scope, so no context or tool action crosses the personal /
+   * professional boundary. If the split cannot be produced, the user is asked
+   * to send the two parts separately.
+   */
+  private async dispatchSplitHybrid(
+    user: AgentUser,
+    message: string,
+    conversationId: string,
+    channel: 'text' | 'voice' | 'vision' | 'voice_vision',
+    recentInterruption: boolean,
+    externalContextNotes: string[],
+  ): Promise<{ content: string; metadata: Record<string, unknown>; action?: OrchestratorConfirmationAction }> {
+    const split = await this.routerService.splitHybrid(message, user.id);
+    if (!split) {
+      this.logger.debug('Hybrid split unavailable: asking the user to split the message');
+      return { content: HYBRID_BLOCKED_MESSAGE, metadata: { agent: 'hybrid', crossScopeBlocked: true, splitFailed: true } };
+    }
+
+    const professionalRouting = await this.routerService.classify(split.professional, user.id);
+    const professionalSpace: ProfessionalSpace =
+      professionalRouting.route === 'professional' ? (professionalRouting.space as ProfessionalSpace) : 'general';
+
+    const personalDecision = this.buildPartDecision('personal', 'personal', 'personal');
+    const professionalDecision = this.buildPartDecision('professional', 'professional', professionalSpace);
+
+    const personalResponse = await this.personalAgent.handle({
+      user,
+      message: split.personal,
+      conversationId,
+      routerDecision: personalDecision,
+      channel,
+      recentInterruption,
+      externalContextNotes,
+    });
+    const personalResult = await this.resolveAgentResponse(
+      user, split.personal, personalDecision, conversationId, 'personal', personalResponse,
+    );
+
+    const professionalResponse = await this.professionalAgent.handle({
+      user,
+      message: split.professional,
+      conversationId,
+      routerDecision: professionalDecision,
+      channel,
+      recentInterruption,
+      externalContextNotes,
+    });
+    const professionalResult = await this.resolveAgentResponse(
+      user, split.professional, professionalDecision, conversationId, 'professional', professionalResponse,
+    );
+
+    const actions = [personalResult.action, professionalResult.action].filter(
+      (action): action is OrchestratorConfirmationAction => Boolean(action),
+    );
+    if (actions.length > 1) {
+      return {
+        content: 'Vous avez demandé deux actions à la fois : merci de les envoyer une par une.',
+        metadata: { agent: 'hybrid', split: true, multipleActions: true },
+      };
+    }
+
+    return {
+      content: `**Personnel**\n${personalResult.content}\n\n**Professionnel**\n${professionalResult.content}`,
+      metadata: { agent: 'hybrid', split: true },
+      action: actions[0],
+    };
+  }
+
+  private buildPartDecision(
+    route: 'personal' | 'professional',
+    scope: 'personal' | 'professional',
+    space: MoraSpace,
+  ): RouterDecisionResult {
+    return {
+      route,
+      scope,
+      space,
+      intent: 'split_part',
+      complexity: 'medium',
+      securityLevel: 'medium',
+      confidence: 0.8,
+      method: 'rules',
+    };
   }
 
   /**
@@ -368,14 +453,19 @@ export class MoraOrchestratorService {
       return decision;
     }
 
+    // Same rule as MoraRouterService.buildResult: "personal" only ever has the "personal"
+    // space. A stale row recorded before that normalization existed could otherwise carry a
+    // non-personal space forward into every later turn of this conversation via continuity.
+    const space = active.scope === 'personal' ? 'personal' : active.space;
+
     this.logger.debug(
-      `Conversation continuity: "${decision.route}" turn continued as ${active.scope}/${active.space}`,
+      `Conversation continuity: "${decision.route}" turn continued as ${active.scope}/${space}`,
     );
     return {
       ...decision,
       route: active.scope as RouterDecisionResult['route'],
       scope: active.scope as RouterDecisionResult['scope'],
-      space: active.space as RouterDecisionResult['space'],
+      space: space as RouterDecisionResult['space'],
       method: 'continuity',
     };
   }
@@ -501,12 +591,19 @@ export class MoraOrchestratorService {
   private async scheduleBackgroundJobs(
     userId: string,
     conversationId: string,
+    conversationTitle: string | null,
     decision: RouterDecisionResult,
     sourceMessageId: string,
     userMessage: string,
     assistantResponse: string,
   ): Promise<void> {
     const scope = decision.scope as 'personal' | 'professional';
+
+    if (!conversationTitle) {
+      await this.titleConversation(userId, conversationId, userMessage).catch((error: unknown) =>
+        this.logger.warn(`Conversation titling failed: ${String(error)}`),
+      );
+    }
 
     await this.memoryQueue.enqueueExtraction({
       userId,
@@ -521,5 +618,30 @@ export class MoraOrchestratorService {
     if (await this.conversationSummaryService.shouldSummarize(conversationId, scope, decision.space)) {
       await this.memoryQueue.enqueueSummary({ conversationId, userId, scope, space: decision.space });
     }
+  }
+
+  /** Best-effort, once per conversation: a short title from its first message, instead of "Conversation sans titre". */
+  private async titleConversation(userId: string, conversationId: string, userMessage: string): Promise<void> {
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Donne un titre très court (2 à 6 mots) qui résume ce message, pour une liste de conversations. ' +
+              'Pas de guillemets, pas de point final, pas de texte avant ou après le titre.',
+          },
+          { role: 'user', content: userMessage.slice(0, 500) },
+        ],
+        temperature: 0.3,
+        maxTokens: 20,
+      },
+      { userId, route: 'conversation-title' },
+    );
+    if (!response.configured) return;
+
+    const title = response.content.trim().replace(/^["'«»]+|["'«»]+$/g, '').slice(0, 80);
+    if (!title) return;
+    await this.conversationsService.setTitleIfMissing(conversationId, title);
   }
 }

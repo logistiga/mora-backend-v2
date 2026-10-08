@@ -4,6 +4,7 @@ import type { Memory, Prisma } from '../generated/prisma/client.js';
 import type { CreateMemoryDto } from './dto/create-memory.dto.js';
 import type { ListMemoriesQueryDto } from './dto/list-memories.dto.js';
 import type { UpdateMemoryDto } from './dto/update-memory.dto.js';
+import type { MemorySource } from './memory.types.js';
 import { MemoryQueueService } from './queue/memory-queue.service.js';
 
 const LIST_LIMIT = 100;
@@ -18,7 +19,7 @@ export class MemoryService {
   async create(
     userId: string,
     dto: CreateMemoryDto,
-    source: 'manual' | 'extraction' = 'manual',
+    source: MemorySource = 'manual',
     sourceId?: string,
   ): Promise<Memory> {
     const memory = await this.prisma.memory.create({
@@ -107,7 +108,7 @@ export class MemoryService {
     userId: string,
     oldId: string,
     dto: CreateMemoryDto,
-    source: 'manual' | 'extraction' = 'manual',
+    source: MemorySource = 'manual',
     sourceId?: string,
   ): Promise<{ old: Memory; replacement: Memory }> {
     const old = await this.getById(userId, oldId);

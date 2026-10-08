@@ -4,7 +4,7 @@ import { ContextBuilderService } from '../context/context-builder.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { ToolRegistryService } from '../tools/tool-registry.service.js';
 import { UserSkillsService } from '../skills/user-skills.service.js';
-import { TOOL_USAGE_RULES } from './agent-prompts.js';
+import { RESPONSE_STYLE_NOTE, SINGLE_OWNER_TRUST_NOTE, TOOL_USAGE_RULES } from './agent-prompts.js';
 import type { AgentInput, AgentResponse } from './agent.types.js';
 
 const SYSTEM_PROMPT_PREFIX = (displayName: string, timeContext: string) =>
@@ -13,6 +13,8 @@ const SYSTEM_PROMPT_PREFIX = (displayName: string, timeContext: string) =>
   "santé, organisation perso). Tu n'as accès à aucune information professionnelle. " +
   'Réponds de façon concise et utile. ' +
   `${timeContext} ` +
+  `${SINGLE_OWNER_TRUST_NOTE} ` +
+  `${RESPONSE_STYLE_NOTE} ` +
   TOOL_USAGE_RULES;
 
 const VOICE_INTERRUPTION_NOTE =

@@ -1,9 +1,11 @@
-import { BadRequestException, Body, Controller, Headers, Logger, NotFoundException, Param, Post, UnauthorizedException } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
+import { BadRequestException, Body, Controller, Headers, Logger, NotFoundException, OnModuleInit, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
 import { EvolutionWebhookDto } from './dto/evolution-webhook.dto.js';
 import { WhatsAppMessageService } from './whatsapp-message.service.js';
+import { WhatsAppMissionService } from './whatsapp-mission.service.js';
 import { maskJid } from './webhook-diagnostics.util.js';
 
 const MAX_TEXT_LENGTH = 4000;
@@ -21,14 +23,24 @@ const MAX_TEXT_LENGTH = 4000;
  */
 @ApiTags('whatsapp-webhook')
 @Controller('webhooks/whatsapp')
-export class WhatsAppWebhookController {
+export class WhatsAppWebhookController implements OnModuleInit {
   private readonly logger = new Logger(WhatsAppWebhookController.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly messageService: WhatsAppMessageService,
     private readonly configService: ConfigService,
+    private readonly missions: WhatsAppMissionService,
   ) {}
+
+  onModuleInit(): void {
+    if (!this.configService.get<string>('app.whatsapp.webhookSecret')) {
+      this.logger.warn(
+        'MORA_WHATSAPP_WEBHOOK_SECRET is not set: this webhook accepts unauthenticated requests. ' +
+          'Set it, and configure the same value as the x-webhook-secret header on the Evolution API side.',
+      );
+    }
+  }
 
   @Post(':accountId')
   async handle(
@@ -37,7 +49,7 @@ export class WhatsAppWebhookController {
     @Body() payload: EvolutionWebhookDto,
   ) {
     const expectedSecret = this.configService.get<string>('app.whatsapp.webhookSecret');
-    if (expectedSecret && providedSecret !== expectedSecret) {
+    if (expectedSecret && !secretsMatch(expectedSecret, providedSecret)) {
       throw new UnauthorizedException('Invalid webhook secret');
     }
 
@@ -99,6 +111,9 @@ export class WhatsAppWebhookController {
       timestamp: message.timestamp,
     });
 
+    // A running goal-driven mission answers this contact. Queued, so the webhook returns at once.
+    if (stored) await this.missions.onInbound(stored.conversationId);
+
     this.logger.log(
       JSON.stringify({
         kind: 'webhook_result',
@@ -109,6 +124,15 @@ export class WhatsAppWebhookController {
     );
     return stored !== null;
   }
+}
+
+/** Constant-time comparison: a regular `!==` leaks the secret one byte at a time via response timing. */
+function secretsMatch(expected: string, provided: string | undefined): boolean {
+  if (!provided) return false;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 function extractMessage(

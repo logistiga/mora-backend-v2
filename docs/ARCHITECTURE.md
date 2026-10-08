@@ -1,21 +1,35 @@
-# Architecture — Phase A (Core Foundation)
+# Architecture — Phases A→I (current state)
 
 ## Scope
 
-This document covers only what exists today. For what's planned, see [`ROADMAP.md`](ROADMAP.md).
+This document used to cover only Phase A. It now tracks the whole backend as implemented; for
+remaining work see [`ROADMAP.md`](ROADMAP.md) and [`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 
 ## Module map
 
 ```
 AppModule
-├─ ConfigModule        (global) — env validation + typed config
-├─ LoggerModule         (nestjs-pino) — structured JSON logs, pretty-printed in dev
-├─ ThrottlerModule       — global rate limiting
-├─ DatabaseModule       (global) — PrismaService
-├─ QueueModule          — BullMQ connection + healthcheck queue/worker
-├─ HealthModule          — GET /health (Postgres + Redis)
-├─ AuthModule            — login/refresh/logout (register: 403 unless MORA_ALLOW_PUBLIC_REGISTRATION=true, tests only)
-└─ UsersModule           — GET /users/me
+├─ ConfigModule           (global) — env validation + typed config
+├─ LoggerModule            (nestjs-pino) — structured JSON logs, pretty-printed in dev
+├─ ThrottlerModule          — global rate limiting
+├─ DatabaseModule          (global) — PrismaService
+├─ QueueModule             — BullMQ connection + healthcheck queue/worker (see "BullMQ" below)
+├─ HealthModule             — GET /health (Postgres + Redis)
+├─ AuthModule               — login/refresh/logout + personal API keys (auth/api-keys)
+├─ UsersModule              — GET /users/me
+├─ RouterModule             — MoraRouter: classifies personal / professional / hybrid / direct
+├─ AgentsModule             — PersonalAgent, ProfessionalAgent
+├─ ContextModule            — reconstructs per-turn context (memory, profile, history)
+├─ OrchestratorModule       — drives a turn end-to-end across the agents above
+├─ LlmModule / AiProvidersModule — provider selection per scope/space, SYSTEM or BYOK keys
+├─ MemoryModule / EmbeddingModule — long-term memory, profile facts, summaries, pgvector search
+├─ ToolsModule / AuditModule / PendingActionsModule — tool registry, execution, confirmation flow
+├─ DocumentsModule / TasksModule / RemindersModule / NotificationsModule
+├─ WhatsAppModule / EmailModule / CalendarModule / GoogleModule / ContactsModule
+├─ BusinessConnectorsModule / McpModule
+├─ VoiceModule              — STT/TTS, streaming, barge-in, stale-turn cancellation
+├─ VisionModule / AvatarModule — snapshot vision, avatar profile/state/lip-sync events
+└─ SkillsModule             — per-user tool-group enable/disable, enforced in 3 places
 ```
 
 Global providers (via `APP_GUARD` / `APP_FILTER` / `APP_PIPE`): `ThrottlerGuard`,
@@ -47,11 +61,33 @@ container start. The Prisma schema declares `extensions = [vector]` (via the
 - Two separate secrets (`JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`) so leaking one doesn't
   compromise the other token type.
 
-### BullMQ: healthcheck job only
-`QueueModule` wires a BullMQ connection to Redis and registers one queue (`healthcheck`) with a
-trivial processor. This exists purely to prove the Redis/BullMQ plumbing works — no business logic
-runs through it yet. Real job types (memory indexing, tool execution, reminders, ...) arrive in
-later phases.
+### BullMQ: `QueueModule` provides the connection, each domain owns its queues
+`QueueModule` (`src/queue/`) does `BullModule.forRootAsync` once, wiring the single Redis
+connection every other queue in the app inherits; it also registers its own `healthcheck` queue
+(used only by `GET /health`). Business modules **do** run real async jobs through it — each with
+its own `*-queue.constants.ts` (queue/job names + `attempts`/`backoff`/`removeOnComplete`
+defaults), a thin `*-queue.service.ts` wrapping `queue.add()`, and a `queue/processors/*` folder:
+- `src/memory/queue/` — `memory-embedding`, `memory-extraction`, `conversation-summary` queues.
+  `MemoryService.create/update` enqueues `enqueueEmbedding(...)` right after the Prisma write and
+  never awaits the job; `MoraOrchestratorService` enqueues extraction/summary the same way after a
+  turn. `EmbeddingService.embed()` itself never throws (returns `{ enabled, embedding, error? }`),
+  so a provider failure surfaces as a logged outcome, not a BullMQ retry today.
+- `src/documents/queue/` — `document-processing` queue, `jobId = documentId` for idempotency on
+  re-upload. `DocumentService` enqueues right after the upload is persisted; the processor runs
+  the real parse/chunk/classify pipeline (`DocumentIntakePipelineService`).
+- `src/reminders/queue/` — one delayed job per reminder (`delay: remindAt - now()`, `jobId =
+  reminder.id`), not a cron sweep; cancelling a reminder removes its BullMQ job directly.
+  `NotificationService` itself is a plain Prisma CRUD (no queue, no email/WhatsApp/push yet) but
+  is only ever called from inside the reminder-delivery processor, i.e. already off the HTTP path.
+
+What is **not** queued: the main LLM call that produces a chat/voice response (`/messages`) stays
+synchronous by design — the HTTP response (or voice stream) *is* that answer, so queuing it would
+mean inventing a polling/callback contract on top of an endpoint that already returns the result
+directly. That is a deliberate design choice, not a gap.
+
+Any change to the retry/backoff/delay defaults above must stay compatible with the `waitFor(...,
+timeoutMs)` polling windows (5000–12000ms) hard-coded in `test/memory.e2e-spec.ts` and
+`test/documents-connections.e2e-spec.ts`, which assert the async pipeline actually completes.
 
 ### Structured logging
 `nestjs-pino` replaces Nest's default logger app-wide (`app.useLogger`), producing JSON logs in

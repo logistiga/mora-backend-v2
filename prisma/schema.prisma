@@ -841,6 +841,8 @@ model Contact {
   name      String
   firstName String? @map("first_name")
   lastName  String? @map("last_name")
+  /// Google People resource name ("people/c123…") once the contact exists in the Google address book.
+  googleResourceName String? @map("google_resource_name")
   company   String?
   jobTitle  String? @map("job_title")
 
@@ -1370,3 +1372,46 @@ model ApiKey {
   @@map("api_keys")
 }
 
+
+/// A goal-driven WhatsApp conversation Mora leads on the user's behalf until the
+/// objective is reached, the contact declines, or a limit is hit.
+model WhatsAppMission {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  contactId      String   @map("contact_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  objective      String
+  questions      Json
+  openingMessage String   @map("opening_message")
+  status         String
+  messagesSent   Int      @default(0) @map("messages_sent")
+  maxMessages    Int      @default(10) @map("max_messages")
+  deadlineAt     DateTime @map("deadline_at")
+  findings       Json     @default("{}")
+  report         String?
+  // Which scope/space started this mission (whatsapp_start_mission's
+  // allowedScopes is ['personal', 'professional']) — needed so a reminder
+  // auto-created from a confirmed appointment lands in the same scope the
+  // user was in, never crossing the personal/professional boundary.
+  // Defaulted for the rows that existed before this column: a mission
+  // predating this feature degrades to "personal", never silently to
+  // "professional" (no safe way to know, and "personal" is the harmless
+  // direction for an already-finished/historical mission).
+  scope          String   @default("personal")
+  space          String   @default("personal")
+  // Set from the model's own JSON turn ("confirmedAt") once both sides have
+  // agreed on an exact date/time — see WhatsAppMissionService.runTurn. Null
+  // until then, and never set at all if the mission ends without a firm
+  // date (e.g. objective wasn't an appointment, or the contact never committed).
+  confirmedAt    DateTime? @map("confirmed_at")
+  // Id of the Reminder auto-created from confirmedAt, if any — lets a repeat
+  // completion signal (should not normally happen, but defends against a
+  // retried job) detect it already created one instead of duplicating it.
+  reminderId     String?  @map("reminder_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([conversationId, status])
+  @@index([status, deadlineAt])
+  @@map("whatsapp_missions")
+}

@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+
+jobs:
+  lint-typecheck-unit:
+    name: Lint, typecheck & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc -b --noEmit
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  e2e:
+    name: E2E tests (Postgres + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: mora
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: mora_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mora -d mora_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://mora:changeme@localhost:5432/mora_test?schema=public
+
+      - name: Run e2e suite
+        run: npm run test:e2e
+        env:
+          # .env.test already holds the full set of non-secret dummy values
+          # the e2e suite needs (JWT secrets, encryption key, feature
+          # flags...); only DATABASE_URL/REDIS_* must point at the CI
+          # service containers instead of localhost-in-a-dev-box.
+          DATABASE_URL: postgresql://mora:changeme@localhost:5432/mora_test?schema=public
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379

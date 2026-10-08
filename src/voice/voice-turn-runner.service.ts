@@ -8,7 +8,6 @@ import { VoiceConfirmationService } from './voice-confirmation.service.js';
 import { VoiceProviderFactoryService } from './providers/voice-provider-factory.service.js';
 import { VoiceProfileService } from './voice-profile.service.js';
 import { VoiceTurnService } from './voice-turn.service.js';
-import { splitIntoSentenceChunks } from './tts/sentence-buffer.util.js';
 import { voiceDebug } from './voice-debug-log.util.js';
 import { buildSttLanguageSignalNote } from '../common/language/language-policy-prompt.js';
 import type { VoiceRuntimeState } from './voice-runtime.registry.js';
@@ -241,16 +240,22 @@ export class VoiceTurnRunnerService {
     state.ttsAbortController = controller;
 
     events.onAssistantSpeakingStarted({ text, channel: 'voice', voiceSpeed: speed, lipSyncEnabled: true });
-    const chunks = splitIntoSentenceChunks(text);
+    // The whole reply is synthesized as ONE MP3 file. Splitting it into sentence
+    // files made the client stitch separately encoded files, which cut mid-word.
+    const chunks = [text.trim()];
     const speakStarted = Date.now();
     let firstByteRecorded = false;
 
     let droppedChunkCount = 0;
-    try {
-      for (const chunk of chunks) {
-        if (controller.signal.aborted || isStale()) break;
+    // The provider streams one MP3 file per sentence, but the HTTP body arrives
+    // in arbitrary byte pieces. The client decodes each message on its own, so a
+    // piece that is not a whole file is dropped and the listener hears a cut.
+    // Each sentence is therefore buffered whole and sent as one complete file.
+    const synthesizeSentence = async (sentence: string): Promise<Buffer | null> => {
+      const parts: Buffer[] = [];
+      try {
         for await (const audioChunk of tts.synthesizeStream({
-          text: chunk,
+          text: sentence,
           voiceId,
           language: state.language,
           speed,
@@ -259,15 +264,34 @@ export class VoiceTurnRunnerService {
           if (controller.signal.aborted || isStale()) {
             // drop any chunk from a superseded generation, no matter what the provider still sends
             droppedChunkCount += 1;
-            break;
+            return null;
           }
+          parts.push(audioChunk);
+        }
+      } catch {
+        return null;
+      }
+      if (controller.signal.aborted || isStale() || parts.length === 0) return null;
+      return Buffer.concat(parts);
+    };
+
+    try {
+      // Look one sentence ahead: the next sentence is synthesized while the
+      // current one is being sent, so the client does not wait for the TTS
+      // round-trip between sentences (audible gaps).
+      let pending: Promise<Buffer | null> | null = chunks.length > 0 ? synthesizeSentence(chunks[0]) : null;
+      for (let index = 0; index < chunks.length && pending; index += 1) {
+        if (controller.signal.aborted || isStale()) break;
+        const audio = await pending;
+        pending = index + 1 < chunks.length ? synthesizeSentence(chunks[index + 1]) : null;
+        if (controller.signal.aborted || isStale()) break;
+        if (audio) {
           if (!firstByteRecorded) {
             latency.ttsFirstByteMs = Date.now() - speakStarted;
             firstByteRecorded = true;
           }
-          events.onAudioChunk(audioChunk);
+          events.onAudioChunk(audio);
         }
-        if (controller.signal.aborted || isStale()) break;
       }
     } finally {
       if (droppedChunkCount > 0) {

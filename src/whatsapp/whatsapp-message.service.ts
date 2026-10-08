@@ -103,6 +103,24 @@ export class WhatsAppMessageService {
   }
 
   /**
+   * Sends to a known contact, opening the conversation if none exists yet.
+   * Only ever reached from WhatsAppSendToContactTool after its own checks
+   * (contact resolved by name, unambiguous, not blocked).
+   */
+  async sendToContact(userId: string, contactId: string, text: string): Promise<WhatsAppMessage> {
+    const conversationId = await this.openConversationForContact(userId, contactId);
+    return this.sendAndPersist(userId, conversationId, text);
+  }
+
+  /** The conversation with a contact on the user's first WhatsApp account, created if missing. */
+  async openConversationForContact(userId: string, contactId: string): Promise<string> {
+    const [account] = await this.accountService.list(userId);
+    if (!account) throw new Error('No WhatsApp account connected');
+    const conversation = await this.getOrCreateConversation(account.id, contactId);
+    return conversation.id;
+  }
+
+  /**
    * Actually sends via the provider and persists the outbound message.
    * Never called directly from a controller — only from
    * WhatsAppSendMessageTool.execute(), itself only ever reached after

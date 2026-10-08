@@ -97,7 +97,7 @@ describe('Messages (e2e) — no LLM configured', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.route).toBe('hybrid');
-    expect(res.body.response).toMatch(/cross-scope est désactivé/i);
+    expect(res.body.response).toMatch(/deux messages distincts/i);
   });
 
   it('reuses the same conversation when conversationId is passed, creates a new one otherwise', async () => {

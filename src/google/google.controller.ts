@@ -6,6 +6,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { GoogleCallbackQueryDto } from './dto/google-callback.dto.js';
 import { GoogleGmailAccountService } from './google-gmail-account.service.js';
 import { GoogleContactsSyncService } from './google-contacts-sync.service.js';
+import { GoogleContactsPushService } from './google-contacts-push.service.js';
 import { GoogleDocsService } from './google-docs.service.js';
 import { GoogleOAuthService } from './google-oauth.service.js';
 
@@ -16,6 +17,7 @@ export class GoogleController {
     private readonly oauth: GoogleOAuthService,
     private readonly gmailAccounts: GoogleGmailAccountService,
     private readonly contactsSync: GoogleContactsSyncService,
+    private readonly contactsPush: GoogleContactsPushService,
     private readonly docs: GoogleDocsService,
   ) {}
 
@@ -61,8 +63,10 @@ export class GoogleController {
   @ApiSecurity('api-key')
   @ApiBearerAuth()
   @UseGuards(JwtAccessGuard)
-  syncContacts(@CurrentUser() user: AuthenticatedUser) {
-    return this.contactsSync.sync(user.id);
+  async syncContacts(@CurrentUser() user: AuthenticatedUser) {
+    const imported = await this.contactsSync.sync(user.id);
+    const pushed = await this.contactsPush.push(user.id);
+    return { ...imported, pushed: pushed.pushed, pushFailed: pushed.failed };
   }
 
   @Get('docs')

@@ -354,7 +354,7 @@ describe('VoiceTurnRunnerService — concurrency / generation guard (Phase G rea
     expect(state.openPendingActionIds.size).toBe(0);
   });
 
-  it('2/3. interruption during TTS streaming: chunks emitted before invalidation arrive, chunks after are dropped (never delivered late)', async () => {
+  it('2/3. interruption during TTS streaming: a sentence interrupted mid-stream is never delivered, neither partly nor late', async () => {
     const control = makeControllableTts();
     const { runner } = makeRunner({ createTts: vi.fn(async () => control.fakeTts) });
     const state = makeState();
@@ -376,8 +376,27 @@ describe('VoiceTurnRunnerService — concurrency / generation guard (Phase G rea
     state.ttsAbortController?.abort();
     await runPromise;
 
+    // Sentences are sent only once complete, so a sentence cut mid-stream is dropped whole.
+    expect(events.onAudioChunk).not.toHaveBeenCalled();
+  });
+
+  it('sends each sentence as one complete audio buffer, not per HTTP piece', async () => {
+    const { runner } = makeRunner({
+      createTts: vi.fn(async () => ({
+        providerName: 'fake',
+        async *synthesizeStream() {
+          yield Buffer.from('ab');
+          yield Buffer.from('cd');
+        },
+      })),
+    });
+    const state = makeState();
+    const events = makeEvents();
+
+    await runner.run(state, 'turn-1', state.generationId, 'Bonjour', {}, events);
+
     expect(events.onAudioChunk).toHaveBeenCalledTimes(1);
-    expect(events.onAudioChunk).toHaveBeenCalledWith(Buffer.from('chunk-0'));
+    expect(events.onAudioChunk).toHaveBeenCalledWith(Buffer.from('abcd'));
   });
 
   it('8. two "concurrent" runs for the same session: only the LATEST ever gets to speak — never both', async () => {

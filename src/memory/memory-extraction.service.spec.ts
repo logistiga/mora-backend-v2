@@ -14,7 +14,7 @@ function buildService() {
     ),
   };
   const memoryServiceMock = {
-    findSupersessionCandidate: vi.fn(async (): Promise<{ id: string } | null> => null),
+    findSupersessionCandidate: vi.fn(async (): Promise<{ id: string; content: string } | null> => null),
     create: vi.fn(async () => ({ id: 'created-1' })),
     supersede: vi.fn(async () => ({ old: { id: 'old' }, replacement: { id: 'new' } })),
   };
@@ -103,6 +103,22 @@ describe('MemoryExtractionService', () => {
       expect(result.memories).toHaveLength(1);
       expect(result.memories[0].kind).toBe('preference');
       expect(result.essentialFacts).toEqual([]);
+    });
+
+    it('parses candidates even when the model wraps its JSON in a ```json code fence', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '```json\n' + JSON.stringify({ memories: [{ kind: 'fact', content: 'Fait utile', importance: 0.6, confidence: 0.6 }], essentialFacts: [] }) + '\n```',
+        provider: 'test',
+        model: 'test-model',
+      });
+
+      const result = await ctx.service.proposeCandidates('Un message assez long pour être considéré', 'Réponse.', {
+        userId: 'u1', scope: 'personal', space: 'personal',
+      });
+
+      expect(result.memories).toHaveLength(1);
+      expect(result.memories[0].content).toBe('Fait utile');
     });
 
     it('returns no candidates when the LLM output is not valid JSON', async () => {
@@ -303,8 +319,82 @@ describe('MemoryExtractionService', () => {
       expect(ctx.memoryServiceMock.supersede).not.toHaveBeenCalled();
     });
 
+    it("a candidate's own scope overrides the batch scope, and forces the personal space when personal", async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue(null);
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'professional',
+        space: 'code',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Sa fille Chahd est née le 6 février 2015', importance: 0.8, confidence: 0.8, scope: 'personal' }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ scope: 'personal', space: 'personal' }),
+        'document',
+        'doc1',
+      );
+    });
+
+    it('never supersedes a memory with a less detailed restatement that would lose its dates (regression: a real family fact lost its children’s birth dates this way)', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({
+        id: 'detailed-1',
+        content: 'Omar a une épouse, Jinane El Bouch, née le 7 août 1987, et trois enfants : Chahd (née le 6 février 2015), Bilal (né le 16 mars 2017) et Yassin (né le 13 mai 2024).',
+      });
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Omar a une épouse, Jinane El Bouch, et trois enfants : Chahd, Bilal et Yassin.', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.supersede).not.toHaveBeenCalled();
+      expect(ctx.memoryServiceMock.create).not.toHaveBeenCalled();
+    });
+
+    it('still supersedes when the new version has at least as much digit detail as the one it replaces', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-1', content: 'Née le 6 février 2015' });
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'person', content: 'Née le 6 février 2016 (date corrigée)', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.supersede).toHaveBeenCalledOnce();
+    });
+
+    it('a candidate without its own scope keeps the batch scope and space', async () => {
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue(null);
+
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'professional',
+        space: 'logistiga',
+        sourceMessageId: 'doc1',
+        candidates: [{ kind: 'fact', content: 'Tarif chariot élévateur : 230 000 FCFA / shift', importance: 0.6, confidence: 0.6 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ scope: 'professional', space: 'logistiga' }),
+        'document',
+        'doc1',
+      );
+    });
+
     it('supersedes an existing similar memory instead of duplicating it', async () => {
-      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-memory' });
+      ctx.memoryServiceMock.findSupersessionCandidate.mockResolvedValue({ id: 'old-memory', content: 'Préfère les rappels longs' });
 
       await ctx.service.commitCandidates({
         userId: 'u1',
@@ -369,6 +459,98 @@ describe('MemoryExtractionService', () => {
       expect(ctx.profileFactsServiceMock.upsertEssential).toHaveBeenCalledWith(
         'u1',
         expect.objectContaining({ key: 'language_behavior', source: 'extraction', sourceId: 'msg1' }),
+      );
+    });
+  });
+
+  describe('proposeCandidatesFromDocument', () => {
+    it('returns nothing for empty text without calling the LLM', async () => {
+      const result = await ctx.service.proposeCandidatesFromDocument('   ', { userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md' });
+
+      expect(result).toEqual([]);
+      expect(ctx.llmServiceMock.complete).not.toHaveBeenCalled();
+    });
+
+    it('returns nothing when no LLM is configured', async () => {
+      const result = await ctx.service.proposeCandidatesFromDocument('Some document text.', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md',
+      });
+
+      expect(result).toEqual([]);
+    });
+
+    it('parses candidates even when the model wraps its JSON in a ```json code fence', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '```json\n{"memories":[{"kind":"fact","content":"Née le 6 février 2015","importance":0.6,"confidence":0.6}]}\n```',
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('texte du document', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toBe('Née le 6 février 2015');
+    });
+
+    it('parses up to 15 memory candidates from a configured LLM, dropping malformed ones', async () => {
+      const many = Array.from({ length: 20 }, (_, i) => `{"kind":"fact","content":"fact ${i}","importance":0.5,"confidence":0.5}`);
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: `{"memories":[${many.join(',')}, {"kind":"not_a_kind","content":"x"}, {"content":"no kind"}]}`,
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('Long document…', {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'memoire.md',
+      });
+
+      expect(result).toHaveLength(15);
+      expect(result[0]).toMatchObject({ kind: 'fact', content: 'fact 0' });
+    });
+
+    it('drops a candidate whose content contains a secret-shaped value', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({
+        configured: true,
+        content: '{"memories":[{"kind":"fact","content":"API key: sk-live-aBcDeFgHiJkLmNoPqRsTuVwXyZ123456","importance":0.5,"confidence":0.5}]}',
+        provider: 'p', model: 'm',
+      });
+
+      const result = await ctx.service.proposeCandidatesFromDocument('text', { userId: 'u1', scope: 'personal', space: 'personal', filename: 'a.md' });
+
+      expect(result).toEqual([]);
+    });
+
+    it('truncates very long documents before sending them to the model', async () => {
+      ctx.llmServiceMock.complete.mockResolvedValue({ configured: true, content: '{"memories":[]}', provider: 'p', model: 'm' });
+
+      await ctx.service.proposeCandidatesFromDocument('x'.repeat(50_000), {
+        userId: 'u1', scope: 'personal', space: 'personal', filename: 'big.md',
+      });
+
+      const call = ctx.llmServiceMock.complete.mock.calls[0] as unknown as [{ messages: { content: string }[] }];
+      const sentContent = call[0].messages[1].content;
+      expect(sentContent.length).toBeLessThan(13_000);
+    });
+  });
+
+  describe('commitCandidates — document source', () => {
+    it('tags created memories with source "document" when given', async () => {
+      await ctx.service.commitCandidates({
+        userId: 'u1',
+        scope: 'personal',
+        space: 'personal',
+        sourceMessageId: 'doc-1',
+        candidates: [{ kind: 'fact', content: 'Une information du document', importance: 0.5, confidence: 0.5 }],
+        source: 'document',
+      });
+
+      expect(ctx.memoryServiceMock.create).toHaveBeenCalledWith(
+        'u1',
+        expect.objectContaining({ content: 'Une information du document' }),
+        'document',
+        'doc-1',
       );
     });
   });

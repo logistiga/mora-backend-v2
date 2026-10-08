@@ -193,6 +193,22 @@ describe('MoraRouterService', () => {
     await service.classify('Bonjour');
     expect(llmServiceMock.complete).not.toHaveBeenCalled();
   });
+
+  it('forces the "personal" space even when the LLM fallback returns a professional space for a personal route', async () => {
+    llmServiceMock.complete.mockResolvedValue({
+      configured: true,
+      content: JSON.stringify({ route: 'personal', space: 'general', intent: 'remind me of a birthday', confidence: 0.9 }),
+      provider: 'test', model: 'test-model',
+    });
+
+    const ambiguous = 'Considérant la situation actuelle et les circonstances environnantes qui évoluent';
+    const result = await service.classify(ambiguous);
+
+    expect(result.method).toBe('llm-fallback');
+    expect(result.scope).toBe('personal');
+    expect(result.space).toBe('personal');
+  });
+
   describe('user-data questions never land on the tool-less direct route', () => {
     it.each([
       "Qu'est-ce que tu sais sur moi ?",
@@ -232,6 +248,37 @@ describe('MoraRouterService', () => {
     ])('leaves a general question "%s" alone', async (text) => {
       const result = await service.classify(text);
       expect(result.route).toBe('direct');
+    });
+  });
+
+  describe('splitHybrid', () => {
+    it('returns both parts when the LLM answers with valid JSON', async () => {
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true,
+        content: '{"personal":"Rappelle-moi mon rdv","professional":"Statut Logistiga ?"}',
+        provider: 'p', model: 'm',
+      });
+
+      await expect(service.splitHybrid('rdv et statut Logistiga')).resolves.toEqual({
+        personal: 'Rappelle-moi mon rdv',
+        professional: 'Statut Logistiga ?',
+      });
+    });
+
+    it('returns null when no LLM is configured', async () => {
+      await expect(service.splitHybrid('rdv et statut Logistiga')).resolves.toBeNull();
+    });
+
+    it('returns null when a part is missing or the output is not JSON', async () => {
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true, content: '{"personal":"rdv","professional":""}', provider: 'p', model: 'm',
+      });
+      await expect(service.splitHybrid('x')).resolves.toBeNull();
+
+      llmServiceMock.complete.mockResolvedValueOnce({
+        configured: true, content: 'not json', provider: 'p', model: 'm',
+      });
+      await expect(service.splitHybrid('x')).resolves.toBeNull();
     });
   });
 

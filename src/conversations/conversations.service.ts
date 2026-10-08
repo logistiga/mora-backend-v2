@@ -13,6 +13,16 @@ export class ConversationsService {
     return this.prisma.conversation.create({ data: { userId, title } });
   }
 
+  private async messageCreatedAt(messageId: string): Promise<Date | null> {
+    const message = await this.prisma.message.findUnique({ where: { id: messageId }, select: { createdAt: true } });
+    return message?.createdAt ?? null;
+  }
+
+  /** Sets the title once: a `where: { title: null }` guard so two concurrent attempts never fight over it. */
+  async setTitleIfMissing(conversationId: string, title: string): Promise<void> {
+    await this.prisma.conversation.updateMany({ where: { id: conversationId, title: null }, data: { title } });
+  }
+
   /** Fetches a conversation, creating one if `conversationId` is omitted. Throws if the
    *  conversation exists but belongs to someone else — conversations never cross users. */
   async getOrCreateConversation(userId: string, conversationId?: string): Promise<Conversation> {
@@ -133,16 +143,25 @@ export class ConversationsService {
    * enforcement point for "Personal never sees Professional and vice versa":
    * an agent is only ever handed history through this method, and it simply
    * never returns another scope's rows.
+   *
+   * `sinceMessageId`, when given, excludes every message at or before it —
+   * ContextBuilderService passes the active conversation summary's
+   * `toMessageId` here so the raw history it sends never repeats what the
+   * summary already covers (previously: both were sent in full, wasting the
+   * context budget on duplicated turns and diluting genuinely recent memory).
    */
   async getScopedHistory(
     conversationId: string,
     scope: string,
     limit = HISTORY_LIMIT,
+    sinceMessageId?: string,
   ): Promise<LlmMessage[]> {
+    const since = sinceMessageId ? await this.messageCreatedAt(sinceMessageId) : null;
     const messages = await this.prisma.message.findMany({
       where: {
         conversationId,
         scope: { in: [scope, 'direct'] },
+        ...(since ? { createdAt: { gt: since } } : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: limit,

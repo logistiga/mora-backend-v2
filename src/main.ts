@@ -16,6 +16,10 @@ async function bootstrap(): Promise<void> {
 
   app.useLogger(app.get(Logger));
   app.use(helmet());
+  // Let OnModuleDestroy hooks (e.g. QueueService closing its BullMQ
+  // QueueEvents connection) run on SIGTERM/SIGINT instead of the process
+  // being killed mid-job when Docker/Coolify stops the container.
+  app.enableShutdownHooks();
 
   const configService = app.get(ConfigService);
   const appConfig = configService.get<AppConfig>('app')!;

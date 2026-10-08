@@ -16,7 +16,8 @@ export const GOOGLE_SCOPES = {
   gmailRead: 'https://www.googleapis.com/auth/gmail.readonly',
   gmailSend: 'https://www.googleapis.com/auth/gmail.send',
   email: 'openid email',
-  contactsRead: 'https://www.googleapis.com/auth/contacts.readonly',
+  // Read and write: Mora pushes contacts created in Mora to the Google address book.
+  contactsWrite: 'https://www.googleapis.com/auth/contacts',
   driveRead: 'https://www.googleapis.com/auth/drive.readonly',
   docsRead: 'https://www.googleapis.com/auth/documents.readonly',
 } as const;
@@ -60,7 +61,7 @@ export class GoogleOAuthService {
       client_id: google.clientId!,
       redirect_uri: google.redirectUri!,
       response_type: 'code',
-      scope: [GOOGLE_SCOPES.calendar, GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.gmailSend, GOOGLE_SCOPES.contactsRead, GOOGLE_SCOPES.driveRead, GOOGLE_SCOPES.docsRead, GOOGLE_SCOPES.email].join(' '),
+      scope: [GOOGLE_SCOPES.calendar, GOOGLE_SCOPES.gmailRead, GOOGLE_SCOPES.gmailSend, GOOGLE_SCOPES.contactsWrite, GOOGLE_SCOPES.driveRead, GOOGLE_SCOPES.docsRead, GOOGLE_SCOPES.email].join(' '),
       access_type: 'offline',
       prompt: 'consent',
       include_granted_scopes: 'true',

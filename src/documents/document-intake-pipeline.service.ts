@@ -4,6 +4,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { EmbeddingService } from '../embedding/embedding.service.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { EntitiesService } from '../memory/entities.service.js';
+import { MemoryExtractionService } from '../memory/memory-extraction.service.js';
 import { DocumentChunkEmbeddingRepository } from './document-chunk-embedding.repository.js';
 import { DocumentClassificationService } from './document-classification.service.js';
 import { DocumentChunkerService } from './extraction/document-chunker.service.js';
@@ -36,6 +37,7 @@ export class DocumentIntakePipelineService {
     private readonly chunkEmbeddings: DocumentChunkEmbeddingRepository,
     private readonly entitiesService: EntitiesService,
     private readonly auditService: AuditService,
+    private readonly memoryExtraction: MemoryExtractionService,
   ) {}
 
   async process(documentId: string, userId: string): Promise<void> {
@@ -97,6 +99,14 @@ export class DocumentIntakePipelineService {
       }
 
       await this.persistTables(documentId, extracted.tables);
+
+      // Best-effort, like classification: the document stays searchable even if this fails
+      // or no LLM is configured. This is what lets Mora answer from the document's content
+      // directly in conversation, instead of only finding it via an explicit document search.
+      await this.extractMemories(document, extracted.text).catch((error: unknown) => {
+        this.logger.warn(`Memory extraction failed for document ${documentId}: ${String(error)}`);
+      });
+
       await this.chunkAndEmbed(documentId, userId, document.scope, document.space, extracted.text);
 
       await this.prisma.document.update({
@@ -191,6 +201,37 @@ export class DocumentIntakePipelineService {
         }
       }
     }
+  }
+
+  /**
+   * Pulls durable facts out of the document into fast-access memory (AGENTS'
+   * "mémoire rapide"): these are what the context builder injects into every
+   * reply automatically, unlike a document, which Mora only reads when she
+   * (or the user) explicitly searches it. A document is extracted once.
+   */
+  private async extractMemories(
+    document: { id: string; userId: string; scope: string; space: string; originalFilename: string },
+    text: string,
+  ): Promise<void> {
+    if (document.scope !== 'personal' && document.scope !== 'professional') return;
+
+    const candidates = await this.memoryExtraction.proposeCandidatesFromDocument(text, {
+      userId: document.userId,
+      scope: document.scope,
+      space: document.space,
+      filename: document.originalFilename,
+    });
+    if (candidates.length === 0) return;
+
+    await this.memoryExtraction.commitCandidates({
+      userId: document.userId,
+      scope: document.scope,
+      space: document.space,
+      sourceMessageId: document.id, // not a Message id — sourceId is a free-form reference; see Memory.sourceId
+      candidates,
+      source: 'document',
+    });
+    this.logger.log(`Extracted ${candidates.length} memories from document ${document.id}`);
   }
 
   private async chunkAndEmbed(documentId: string, userId: string, scope: string, space: string, text: string): Promise<void> {

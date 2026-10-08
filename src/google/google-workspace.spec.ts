@@ -48,7 +48,8 @@ describe('GoogleContactsSyncService', () => {
       update: vi.fn(async () => ({})),
     };
     const oauth = { getAccessToken: vi.fn(async () => 'AT') };
-    service = new GoogleContactsSyncService(oauth as never, contacts as never);
+    const prisma = { contact: { update: vi.fn(async () => ({})), updateMany: vi.fn(async () => ({ count: 0 })) } };
+    service = new GoogleContactsSyncService(oauth as never, contacts as never, prisma as never);
   });
   afterEach(() => vi.unstubAllGlobals());
 

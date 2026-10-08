@@ -12,6 +12,7 @@ function buildService() {
     message: {
       create: vi.fn(),
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
@@ -43,6 +44,31 @@ describe('ConversationsService — interrupted assistant history filtering', () 
       { role: 'user', content: 'Explique-moi comment fonctionne un rappel dans Mora.' },
       { role: 'user', content: 'Non, parle-moi plutôt des bases de données PostgreSQL.' },
     ]);
+  });
+
+  it('getScopedHistory(..., sinceMessageId) only fetches messages created after that message', async () => {
+    ctx.prisma.message.findUnique.mockResolvedValue({ createdAt: new Date('2026-01-01T00:00:00Z') });
+    ctx.prisma.message.findMany.mockResolvedValue([]);
+
+    await ctx.service.getScopedHistory('conv-1', 'personal', 20, 'summary-boundary-msg');
+
+    expect(ctx.prisma.message.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          conversationId: 'conv-1',
+          createdAt: { gt: new Date('2026-01-01T00:00:00Z') },
+        }),
+      }),
+    );
+  });
+
+  it('getScopedHistory without sinceMessageId does not filter by createdAt', async () => {
+    ctx.prisma.message.findMany.mockResolvedValue([]);
+
+    await ctx.service.getScopedHistory('conv-1', 'personal', 20);
+
+    const call = ctx.prisma.message.findMany.mock.calls[0][0];
+    expect(call.where.createdAt).toBeUndefined();
   });
 
   it('marks an assistant message as interrupted without losing existing metadata', async () => {

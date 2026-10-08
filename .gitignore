@@ -39,3 +39,6 @@ coverage/
 
 # Staging env file with real secrets, generated on the host.
 .env.staging
+
+# Local MCP client config with a real Mora API key — never versioned.
+tools/mcp-whatsapp/claude_desktop_config.json

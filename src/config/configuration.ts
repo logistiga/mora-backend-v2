@@ -135,8 +135,16 @@ export default (): { app: AppConfig } => ({
       model: process.env.MORA_EMBEDDING_MODEL || undefined,
     },
     memory: {
-      retrievalLimit: parseInt(process.env.MORA_MEMORY_RETRIEVAL_LIMIT ?? '8', 10),
-      contextBudgetChars: parseInt(process.env.MORA_CONTEXT_BUDGET_CHARS ?? '6000', 10),
+      // 8 was sized for a handful of taught facts; documents and the e-mail sync now add many
+      // more real memories per scope on their own, and a relevant fact can be pushed out of a
+      // small top-N by sheer volume even when its similarity score is fine — observed for real
+      // (a family fact lost its slot to older/duplicate entries once ~20 personal memories
+      // existed). Raised with real headroom rather than tuned to today's exact count.
+      retrievalLimit: parseInt(process.env.MORA_MEMORY_RETRIEVAL_LIMIT ?? '25', 10),
+      // Raised alongside retrievalLimit: up to 25 memories plus document extracts and history
+      // need real room, or the bigger memories block itself starts hitting the same
+      // all-or-nothing budget cutoff that this and the retrieval-limit change are fixing.
+      contextBudgetChars: parseInt(process.env.MORA_CONTEXT_BUDGET_CHARS ?? '12000', 10),
       summaryMessageThreshold: parseInt(
         process.env.MORA_SUMMARY_MESSAGE_THRESHOLD ?? '20',
         10,

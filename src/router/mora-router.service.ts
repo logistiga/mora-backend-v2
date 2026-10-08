@@ -83,6 +83,48 @@ export class MoraRouterService {
   constructor(private readonly llmService: LlmService) {}
 
   /**
+   * Splits a message classified as `hybrid` into its personal part and its
+   * professional part, each in the user's own words. Returns null when no LLM
+   * is configured, the output is unparsable, or either part is missing — the
+   * caller then falls back to asking the user to split the message themselves.
+   */
+  async splitHybrid(text: string, userId?: string): Promise<{ personal: string; professional: string } | null> {
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          {
+            role: 'system',
+            content:
+              'The user message mixes a personal request and a professional request. Split it into two parts, ' +
+              'keeping the user\'s wording as much as possible: "personal" holds only the personal part, ' +
+              '"professional" holds only the professional part. Respond with ONLY a JSON object: ' +
+              '{"personal":"string","professional":"string"}. Use an empty string for a part that is absent. No prose.',
+          },
+          { role: 'user', content: text },
+        ],
+        temperature: 0,
+        maxTokens: 400,
+      },
+      { userId, route: 'router-hybrid-split' },
+    );
+
+    if (!response.configured) {
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(response.content) as { personal?: unknown; professional?: unknown };
+      const personal = typeof parsed.personal === 'string' ? parsed.personal.trim() : '';
+      const professional = typeof parsed.professional === 'string' ? parsed.professional.trim() : '';
+      if (!personal || !professional) return null;
+      return { personal, professional };
+    } catch (error) {
+      this.logger.warn(`Hybrid split returned unparsable output: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /**
    * `userId` is optional and, when given, lets the LLM fallback use that
    * user's own AiProvider (Phase C.5) instead of only the env-configured one
    * — see LlmService's selection order. `classifyWithLlm` itself checks
@@ -312,10 +354,16 @@ export class MoraRouterService {
     confidence: number;
     method: RouterDecisionResult['method'];
   }): RouterDecisionResult {
+    // "personal" only ever has the "personal" space — never "general" or a professional
+    // space name. The LLM fallback sometimes returns one anyway; forcing it here, for every
+    // route this method ever builds, stops a personal fact from being filed (or looked up)
+    // under the wrong space and becoming invisible to retrieval.
+    const space = params.scope === 'personal' ? 'personal' : params.space;
+
     return {
       route: params.route,
       scope: params.scope,
-      space: params.space,
+      space,
       intent: params.intent,
       complexity: this.detectComplexity(params.text),
       securityLevel: this.detectSecurityLevel(params.text, params.route),

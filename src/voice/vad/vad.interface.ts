@@ -15,6 +15,10 @@ export interface VoiceActivityDetectorInterface {
   readonly detectorName: string;
   /** Resets internal state for a new turn. */
   reset(): void;
-  /** Feed one PCM16LE frame; returns a VAD event if a transition just occurred, else null. */
-  process(frame: Buffer, nowMs: number): VadEvent | null;
+  /**
+   * Feed one PCM16LE frame; returns a VAD event if a transition just occurred, else null.
+   * `assistantSpeaking`: the assistant's own voice may be leaking into the mic (echo), so
+   * a detector may require stronger, longer speech before it reports a start.
+   */
+  process(frame: Buffer, nowMs: number, assistantSpeaking?: boolean): VadEvent | null;
 }

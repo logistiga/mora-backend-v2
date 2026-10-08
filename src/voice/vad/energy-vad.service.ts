@@ -22,6 +22,8 @@ export class EnergyVadService implements VoiceActivityDetectorInterface {
 
   private readonly threshold = 500; // RMS amplitude threshold, empirical for 16-bit PCM speech
   private readonly startWindowMs = 120;
+  private readonly bargeInThreshold = 1500; // echo of the assistant's own voice is usually well below this
+  private readonly bargeInStartWindowMs = 450;
   private readonly silenceWindowMs = 600;
 
   private speaking = false;
@@ -34,15 +36,19 @@ export class EnergyVadService implements VoiceActivityDetectorInterface {
     this.belowSince = null;
   }
 
-  process(frame: Buffer, nowMs: number): VadEvent | null {
+  process(frame: Buffer, nowMs: number, assistantSpeaking = false): VadEvent | null {
     const rms = computeRms(frame);
-    const isAboveThreshold = rms >= this.threshold;
+    // While the assistant speaks, its own voice can reach the mic through the speakers.
+    // Require a louder and longer sustained voice before a start counts as a barge-in.
+    const threshold = assistantSpeaking ? this.bargeInThreshold : this.threshold;
+    const startWindowMs = assistantSpeaking ? this.bargeInStartWindowMs : this.startWindowMs;
+    const isAboveThreshold = rms >= threshold;
 
     if (isAboveThreshold) {
       this.belowSince = null;
       if (!this.speaking) {
         if (this.aboveSince === null) this.aboveSince = nowMs;
-        if (nowMs - this.aboveSince >= this.startWindowMs) {
+        if (nowMs - this.aboveSince >= startWindowMs) {
           this.speaking = true;
           this.aboveSince = null;
           return { type: 'speech_started', atMs: nowMs };

@@ -6,7 +6,13 @@ import { EntitiesService } from './entities.service.js';
 import { MemoryService } from './memory.service.js';
 import { ProfileFactsService } from './profile-facts.service.js';
 import type { CreateMemoryDto } from './dto/create-memory.dto.js';
-import { MEMORY_KINDS, type EssentialFactCandidate, type MemoryCandidate, type MemoryKind } from './memory.types.js';
+import {
+  MEMORY_KINDS,
+  type EssentialFactCandidate,
+  type MemoryCandidate,
+  type MemoryKind,
+  type MemorySource,
+} from './memory.types.js';
 
 const ENTITY_KIND_TYPES = new Set(['person', 'company']);
 
@@ -16,6 +22,30 @@ const TRIVIAL_PATTERN =
   /^(bonjour|salut|coucou|hello|hi|hey|bonsoir|merci|merci beaucoup|ok|d'accord|oui|non|parfait|très bien|super|cool|au revoir|à bientôt)\W*$/i;
 const MIN_WORD_COUNT = 4;
 const MAX_ESSENTIAL_CANDIDATES = 2;
+// A document can describe far more durable facts than one conversation turn, and there is
+// no per-message cadence limiting how often this runs (once per document, not per message).
+const MAX_DOCUMENT_MEMORIES = 15;
+// Budget in characters, not tokens, but close enough to keep the call's cost bounded — a
+// document's first ~12k characters are extracted from, not the whole file for a huge one.
+const DOCUMENT_TEXT_BUDGET = 12_000;
+
+const DOCUMENT_EXTRACTION_SYSTEM_PROMPT =
+  "Tu identifies les informations DURABLES et utiles à mémoriser dans un document que l'utilisateur " +
+  'vient d\'ajouter, pour pouvoir répondre à ses questions plus tard SANS avoir à rouvrir le document. ' +
+  'Réponds UNIQUEMENT avec un objet JSON de la forme {"memories": [...]}. Aucun texte hors de ce JSON.\n\n' +
+  `"memories" (0 à ${MAX_DOCUMENT_MEMORIES} éléments) : faits durables — personnes, sociétés, dates, ` +
+  'décisions, tarifs, coordonnées, procédures, préférences, projets. Forme : {"kind": "...", "content": ' +
+  '"phrase autonome et factuelle, compréhensible sans relire le document", "scope": "personal|professional", ' +
+  `"importance": 0-1, "confidence": 0-1}. "kind" doit être l'une de: ${MEMORY_KINDS.join(', ')}.\n\n` +
+  '"scope" classe CE FAIT PRÉCIS par ce qu\'il dit, jamais par le classement du document dans son ensemble : ' +
+  'un document professionnel peut contenir un fait personnel (famille, santé, voyage privé) et l\'inverse. ' +
+  'Un fait sur la famille, la santé, un loisir ou un bien personnel est "personal" même dans un document ' +
+  'professionnel ; un fait sur une société, un client, un tarif ou une procédure de travail est ' +
+  '"professional" même dans un document personnel.\n\n' +
+  "Ignore le texte générique, les instructions de mise en forme, et tout ce qui n'apporte rien à retenir. " +
+  "Si le document signale lui-même qu'une information est ancienne, incertaine, une simple proposition ou à " +
+  'vérifier, reflète cette réserve dans le contenu plutôt que de la présenter comme un fait acquis. ' +
+  'Si rien ne mérite d\'être retenu, réponds {"memories":[]}.';
 
 const EXTRACTION_SYSTEM_PROMPT =
   'Tu identifies les informations DURABLES et utiles à mémoriser dans un échange entre un ' +
@@ -105,9 +135,53 @@ export class MemoryExtractionService {
     return this.parseCandidates(response.content);
   }
 
+  /**
+   * Same idea as `proposeCandidates`, but for a whole document instead of one
+   * conversation turn: no triviality/word-count gate (a document is always
+   * worth looking at), a much higher candidate cap, and a prompt written for
+   * a standalone document rather than a dialogue exchange.
+   */
+  async proposeCandidatesFromDocument(
+    text: string,
+    context: { userId: string; scope: string; space: string; filename: string },
+  ): Promise<MemoryCandidate[]> {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    const response = await this.llmService.complete(
+      {
+        messages: [
+          { role: 'system', content: DOCUMENT_EXTRACTION_SYSTEM_PROMPT },
+          { role: 'user', content: `Document : ${context.filename}\n\n${trimmed.slice(0, DOCUMENT_TEXT_BUDGET)}` },
+        ],
+        temperature: 0,
+        maxTokens: 1800,
+      },
+      { userId: context.userId, scope: context.scope, space: context.space, route: 'memory-extraction-document' },
+    );
+
+    if (!response.configured) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(stripCodeFence(response.content)) as unknown;
+      const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+      return (Array.isArray(obj.memories) ? obj.memories : [])
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => this.coerceMemoryCandidate(item))
+        .filter((c): c is MemoryCandidate => c !== null)
+        .filter((c) => !containsSecret(c.content))
+        .slice(0, MAX_DOCUMENT_MEMORIES);
+    } catch (error) {
+      this.logger.warn(`Document memory extraction returned unparsable output: ${String(error)}`);
+      return [];
+    }
+  }
+
   private parseCandidates(raw: string): { memories: MemoryCandidate[]; essentialFacts: EssentialFactCandidate[] } {
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = JSON.parse(stripCodeFence(raw)) as unknown;
       const obj = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 
       const memories = (Array.isArray(obj.memories) ? obj.memories : [])
@@ -136,11 +210,18 @@ export class MemoryExtractionService {
     const content = typeof item.content === 'string' ? item.content.trim() : '';
     if (!kind || !content) return null;
 
+    // Only meaningful for a document/e-mail extraction (see proposeCandidatesFromDocument):
+    // the model classifies each fact by what it actually says, not by whatever scope the
+    // document happened to be filed under — a personal fact filed as "professional" (or the
+    // reverse) must still end up where the user will actually look for it.
+    const scope = item.scope === 'personal' || item.scope === 'professional' ? item.scope : undefined;
+
     return {
       kind,
       content,
       importance: clamp01(typeof item.importance === 'number' ? item.importance : 0.5),
       confidence: clamp01(typeof item.confidence === 'number' ? item.confidence : 0.5),
+      scope,
     };
   }
 
@@ -168,11 +249,20 @@ export class MemoryExtractionService {
     space: string;
     sourceMessageId: string;
     candidates: MemoryCandidate[];
+    source?: MemorySource;
   }): Promise<void> {
+    const source = params.source ?? 'extraction';
     for (const candidate of params.candidates) {
+      // The fact's own scope wins over the batch's (e.g. a document filed as "professional"
+      // can still contain a personal fact). "personal" only ever has the "personal" space;
+      // a scope flip into "professional" without more information falls back to "general"
+      // rather than keeping a personal-only space value like "personal" or "code".
+      const scope = candidate.scope ?? params.scope;
+      const space = scope === 'personal' ? 'personal' : scope === params.scope ? params.space : 'general';
+
       const dto: CreateMemoryDto = {
-        scope: params.scope,
-        space: params.space,
+        scope,
+        space,
         kind: candidate.kind,
         content: candidate.content,
         importance: candidate.importance,
@@ -181,11 +271,24 @@ export class MemoryExtractionService {
 
       const existing = await this.memoryService.findSupersessionCandidate(
         params.userId,
-        params.scope,
-        params.space,
+        scope,
+        space,
         candidate.kind,
         candidate.content,
       );
+
+      // A near-duplicate restatement that drops detail the existing memory already has (most
+      // often dates, amounts, phone numbers — digits) must never supersede it: this happened
+      // for real — a document/e-mail casually re-mentioning "trois enfants : Chahd, Bilal et
+      // Yassin" matched and overwrote a memory that specifically had each child's birth date,
+      // permanently losing it. A genuine update (a corrected date, say) still has its own
+      // digits and goes through normally; only a strictly less-specific rewrite is skipped.
+      if (existing && countDigits(candidate.content) < countDigits(existing.content)) {
+        this.logger.debug(
+          `Skipped superseding a more detailed memory with a less detailed one (kind=${candidate.kind})`,
+        );
+        continue;
+      }
 
       let memoryId: string;
       if (existing) {
@@ -193,7 +296,7 @@ export class MemoryExtractionService {
           params.userId,
           existing.id,
           dto,
-          'extraction',
+          source,
           params.sourceMessageId,
         );
         memoryId = replacement.id;
@@ -201,14 +304,14 @@ export class MemoryExtractionService {
         const created = await this.memoryService.create(
           params.userId,
           dto,
-          'extraction',
+          source,
           params.sourceMessageId,
         );
         memoryId = created.id;
       }
 
       if (ENTITY_KIND_TYPES.has(candidate.kind)) {
-        await this.linkEntity(params.userId, params.scope, params.space, candidate, memoryId);
+        await this.linkEntity(params.userId, scope, space, candidate, memoryId);
       }
     }
   }
@@ -260,6 +363,16 @@ export class MemoryExtractionService {
       update: {},
     });
   }
+}
+
+/** Some models wrap their JSON answer in a ```json fence despite being told not to; strip it before parsing. */
+function stripCodeFence(raw: string): string {
+  return raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+}
+
+/** How much concrete, checkable detail a memory carries — a cheap proxy that catches the case that matters: dates, amounts, phone numbers. */
+function countDigits(content: string): number {
+  return (content.match(/\d/g) ?? []).length;
 }
 
 function clamp01(value: number): number {
