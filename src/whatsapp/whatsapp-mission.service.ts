@@ -158,6 +158,23 @@ export class WhatsAppMissionService {
     }
   }
 
+  /**
+   * Lets the user stop an in-progress mission on demand ("arrête de contacter X") instead of
+   * only ever ending via the message/time limits. Silently a no-op if there is none — the
+   * caller (a tool) doesn't need to distinguish "already finished" from "never started" and
+   * report either as a harmless outcome to the user.
+   */
+  async cancel(userId: string, contactId: string): Promise<boolean> {
+    const conversationId = await this.messageService.openConversationForContact(userId, contactId);
+    const mission = await this.prisma.whatsAppMission.findFirst({
+      where: { conversationId, status: 'active', userId },
+      select: { id: true },
+    });
+    if (!mission) return false;
+    await this.finish(mission.id, 'cancelled', 'Mission annulée par l’utilisateur.');
+    return true;
+  }
+
   /** Periodic sweep: ends missions whose deadline has passed even when the contact stays silent. */
   async sweep(): Promise<void> {
     const overdue = await this.prisma.whatsAppMission.findMany({
@@ -172,7 +189,7 @@ export class WhatsAppMissionService {
   /** Ends a mission, stores the report, auto-books a confirmed date as a reminder, and tells the user. */
   private async finish(
     missionId: string,
-    status: 'completed' | 'limit_reached' | 'error',
+    status: 'completed' | 'limit_reached' | 'error' | 'cancelled',
     notice?: string,
     findings?: Record<string, string>,
     confirmedAt?: string | null,
@@ -227,7 +244,12 @@ export class WhatsAppMissionService {
     await this.notifications.create({
       userId: mission.userId,
       type: 'whatsapp_mission',
-      title: status === 'completed' ? `Mission terminée : ${who}` : `Mission arrêtée : ${who}`,
+      title:
+        status === 'completed'
+          ? `Mission terminée : ${who}`
+          : status === 'cancelled'
+            ? `Mission annulée : ${who}`
+            : `Mission arrêtée : ${who}`,
       message: report,
       metadata: { missionId, status, reminderId },
     });

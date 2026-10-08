@@ -63,6 +63,7 @@ export const SKILL_CATALOG: readonly SkillDefinition[] = [
       'whatsapp_send_message',
       'whatsapp_send_to_contact',
       'whatsapp_start_mission',
+      'whatsapp_cancel_mission',
       'whatsapp_send_document',
     ],
   },

@@ -196,3 +196,58 @@ describe('WhatsAppMissionService.runTurn', () => {
     expect(messageService.sendAndPersist).not.toHaveBeenCalled();
   });
 });
+
+describe('WhatsAppMissionService.cancel', () => {
+  let prisma: {
+    whatsAppMission: { findFirst: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+    contact: { findUnique: ReturnType<typeof vi.fn> };
+  };
+  let messageService: { openConversationForContact: ReturnType<typeof vi.fn> };
+  let notifications: { create: ReturnType<typeof vi.fn> };
+  let service: WhatsAppMissionService;
+
+  beforeEach(() => {
+    prisma = {
+      whatsAppMission: {
+        findFirst: vi.fn(async () => activeMission()),
+        update: vi.fn(async () => ({})),
+        findUnique: vi.fn(async () => activeMission()),
+      },
+      contact: { findUnique: vi.fn(async () => ({ name: 'Mustapha' })) },
+    };
+    messageService = { openConversationForContact: vi.fn(async () => 'conv-1') };
+    notifications = { create: vi.fn(async () => ({})) };
+    const llm = { complete: vi.fn() };
+    const reminders = { create: vi.fn() };
+    const timeContext = { describeNow: vi.fn() };
+    const queue = { add: vi.fn() };
+    service = new WhatsAppMissionService(
+      prisma as never,
+      messageService as never,
+      llm as never,
+      notifications as never,
+      reminders as never,
+      timeContext as never,
+      queue as never,
+    );
+  });
+
+  it('ends the active mission and notifies with a cancellation report', async () => {
+    const cancelled = await service.cancel('u1', 'c1');
+
+    expect(cancelled).toBe(true);
+    expect(prisma.whatsAppMission.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'stopped' }) }),
+    );
+    expect(notifications.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Mission annulée : Mustapha' }));
+  });
+
+  it('is a harmless no-op when there is no active mission for that contact', async () => {
+    prisma.whatsAppMission.findFirst.mockResolvedValue(null);
+
+    const cancelled = await service.cancel('u1', 'c1');
+
+    expect(cancelled).toBe(false);
+    expect(prisma.whatsAppMission.update).not.toHaveBeenCalled();
+  });
+});

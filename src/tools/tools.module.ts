@@ -62,6 +62,7 @@ import { WhatsAppSendDocumentTool } from './impl/whatsapp-send-document.tool.js'
 import { WhatsAppSendMessageTool } from './impl/whatsapp-send-message.tool.js';
 import { WhatsAppSendToContactTool } from './impl/whatsapp-send-to-contact.tool.js';
 import { WhatsAppStartMissionTool } from './impl/whatsapp-start-mission.tool.js';
+import { WhatsAppCancelMissionTool } from './impl/whatsapp-cancel-mission.tool.js';
 import { EmailSendToContactTool } from './impl/email-send-to-contact.tool.js';
 import { PermissionService } from './permission.service.js';
 import { ToolExecutorService } from './tool-executor.service.js';
@@ -105,6 +106,7 @@ const PHASE_E_TOOLS = [
   WhatsAppSendMessageTool,
   WhatsAppSendToContactTool,
   WhatsAppStartMissionTool,
+  WhatsAppCancelMissionTool,
   EmailSendToContactTool,
   WhatsAppSendDocumentTool,
   EmailListThreadsTool,
