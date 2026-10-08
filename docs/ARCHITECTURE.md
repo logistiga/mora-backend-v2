@@ -1,21 +1,35 @@
-# Architecture — Phase A (Core Foundation)
+# Architecture — Phases A→I (current state)
 
 ## Scope
 
-This document covers only what exists today. For what's planned, see [`ROADMAP.md`](ROADMAP.md).
+This document used to cover only Phase A. It now tracks the whole backend as implemented; for
+remaining work see [`ROADMAP.md`](ROADMAP.md) and [`OPEN_ISSUES.md`](OPEN_ISSUES.md).
 
 ## Module map
 
 ```
 AppModule
-├─ ConfigModule        (global) — env validation + typed config
-├─ LoggerModule         (nestjs-pino) — structured JSON logs, pretty-printed in dev
-├─ ThrottlerModule       — global rate limiting
-├─ DatabaseModule       (global) — PrismaService
-├─ QueueModule          — BullMQ connection + healthcheck queue/worker
-├─ HealthModule          — GET /health (Postgres + Redis)
-├─ AuthModule            — login/refresh/logout (register: 403 unless MORA_ALLOW_PUBLIC_REGISTRATION=true, tests only)
-└─ UsersModule           — GET /users/me
+├─ ConfigModule           (global) — env validation + typed config
+├─ LoggerModule            (nestjs-pino) — structured JSON logs, pretty-printed in dev
+├─ ThrottlerModule          — global rate limiting
+├─ DatabaseModule          (global) — PrismaService
+├─ QueueModule             — BullMQ connection + healthcheck queue/worker (see "BullMQ" below)
+├─ HealthModule             — GET /health (Postgres + Redis)
+├─ AuthModule               — login/refresh/logout + personal API keys (auth/api-keys)
+├─ UsersModule              — GET /users/me
+├─ RouterModule             — MoraRouter: classifies personal / professional / hybrid / direct
+├─ AgentsModule             — PersonalAgent, ProfessionalAgent
+├─ ContextModule            — reconstructs per-turn context (memory, profile, history)
+├─ OrchestratorModule       — drives a turn end-to-end across the agents above
+├─ LlmModule / AiProvidersModule — provider selection per scope/space, SYSTEM or BYOK keys
+├─ MemoryModule / EmbeddingModule — long-term memory, profile facts, summaries, pgvector search
+├─ ToolsModule / AuditModule / PendingActionsModule — tool registry, execution, confirmation flow
+├─ DocumentsModule / TasksModule / RemindersModule / NotificationsModule
+├─ WhatsAppModule / EmailModule / CalendarModule / GoogleModule / ContactsModule
+├─ BusinessConnectorsModule / McpModule
+├─ VoiceModule              — STT/TTS, streaming, barge-in, stale-turn cancellation
+├─ VisionModule / AvatarModule — snapshot vision, avatar profile/state/lip-sync events
+└─ SkillsModule             — per-user tool-group enable/disable, enforced in 3 places
 ```
 
 Global providers (via `APP_GUARD` / `APP_FILTER` / `APP_PIPE`): `ThrottlerGuard`,
@@ -47,11 +61,22 @@ container start. The Prisma schema declares `extensions = [vector]` (via the
 - Two separate secrets (`JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`) so leaking one doesn't
   compromise the other token type.
 
-### BullMQ: healthcheck job only
+### BullMQ: healthcheck job only — known gap
 `QueueModule` wires a BullMQ connection to Redis and registers one queue (`healthcheck`) with a
-trivial processor. This exists purely to prove the Redis/BullMQ plumbing works — no business logic
-runs through it yet. Real job types (memory indexing, tool execution, reminders, ...) arrive in
-later phases.
+trivial processor. This exists to prove the Redis/BullMQ plumbing works. Despite later phases
+(memory indexing, document fact extraction, reminders, notification delivery) being fully
+implemented, **none of that work actually runs through BullMQ today** — it executes synchronously
+inside the HTTP request/response cycle or inline in whichever service triggers it. This is the
+single largest production-readiness gap in the backend:
+- No retry-with-backoff on a failed embedding call or document parse — it just fails the request.
+- A slow LLM/embedding provider directly extends HTTP latency instead of being decoupled.
+- No visibility into queue depth/backlog for these workloads, because they never enter a queue.
+
+Recommended follow-up (not yet done, deliberately — moving this safely needs its own
+test-and-verify pass against the e2e suite, which this delivery could not run locally): add real
+queues/processors for memory indexing and document extraction first (the two most latency-
+sensitive paths), keeping the synchronous path as a fallback behind a feature flag until the e2e
+suite is green against the new async flow.
 
 ### Structured logging
 `nestjs-pino` replaces Nest's default logger app-wide (`app.useLogger`), producing JSON logs in
