@@ -6,7 +6,7 @@ function buildService(budgetChars = 6000) {
     getScopedHistory: vi.fn(async (): Promise<Array<{ role: string; content: string }>> => []),
   };
   const conversationSummaryServiceMock = {
-    getSummary: vi.fn(async (): Promise<{ summary: string } | null> => null),
+    getSummary: vi.fn(async (): Promise<{ summary: string; toMessageId?: string } | null> => null),
   };
   const memoryRetrievalServiceMock = {
     retrieve: vi.fn(
@@ -77,7 +77,12 @@ describe('ContextBuilderService', () => {
 
     expect(ctx.profileFactsServiceMock.getRelevant).toHaveBeenCalledWith('u1', 'personal', 'personal');
     expect(ctx.conversationSummaryServiceMock.getSummary).toHaveBeenCalledWith('conv1', 'personal', 'personal');
-    expect(ctx.conversationsServiceMock.getScopedHistory).toHaveBeenCalledWith('conv1', 'personal', expect.any(Number));
+    expect(ctx.conversationsServiceMock.getScopedHistory).toHaveBeenCalledWith(
+      'conv1',
+      'personal',
+      expect.any(Number),
+      undefined,
+    );
     expect(ctx.memoryRetrievalServiceMock.retrieve).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'u1', scope: 'personal', space: 'personal' }),
     );
@@ -126,6 +131,22 @@ describe('ContextBuilderService', () => {
 
     expect(result.usedSummary).toBe(true);
     expect(result.messages.some((m) => m.content.includes('réponses courtes'))).toBe(true);
+  });
+
+  it("passes the summary's toMessageId as the history cutoff so raw turns never repeat it", async () => {
+    ctx.conversationSummaryServiceMock.getSummary.mockResolvedValue({
+      summary: 'Résumé.',
+      toMessageId: 'msg-42',
+    });
+
+    await ctx.service.build(baseParams);
+
+    expect(ctx.conversationsServiceMock.getScopedHistory).toHaveBeenCalledWith(
+      'conv1',
+      'personal',
+      expect.any(Number),
+      'msg-42',
+    );
   });
 
   it('includes retrieved memories as a system note when present', async () => {

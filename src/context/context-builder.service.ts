@@ -81,16 +81,22 @@ export class ContextBuilderService {
    * via ConversationsService.getScopedHistory).
    */
   async build(params: ContextBuilderParams): Promise<ContextBuilderResult> {
-    const [essentialFacts, profileFacts, summary, history] = await Promise.all([
+    const [essentialFacts, profileFacts, summary] = await Promise.all([
       this.profileFactsService.getEssential(params.userId),
       this.profileFactsService.getRelevant(params.userId, params.scope, params.space),
       this.conversationSummaryService.getSummary(params.conversationId, params.scope, params.space),
-      this.conversationsService.getScopedHistory(
-        params.conversationId,
-        params.scope,
-        RECENT_MESSAGES_LIMIT,
-      ),
     ]);
+    // Only the turns the summary doesn't already cover count as "recent raw
+    // history" — otherwise the same content was being sent twice (once
+    // compressed in the summary, once again verbatim), wasting budget that
+    // could hold genuinely new context and making the model's own answers
+    // more repetitive (it echoes whichever copy it reads last).
+    const history = await this.conversationsService.getScopedHistory(
+      params.conversationId,
+      params.scope,
+      RECENT_MESSAGES_LIMIT,
+      summary?.toMessageId ?? undefined,
+    );
 
     const retrieval = await this.memoryRetrievalService.retrieve({
       userId: params.userId,
@@ -192,10 +198,9 @@ export class ContextBuilderService {
       pushIfBudgetAllows(note);
     }
 
-    // Recent messages: if a summary already covers earlier turns, only the
-    // messages after its `toMessageId` are new — but getScopedHistory doesn't
-    // know about the summary boundary, so we simply cap how many raw turns we
-    // include; the summary itself carries the older context.
+    // Recent messages: `history` above already excludes anything the summary
+    // covers (getScopedHistory was called with summary?.toMessageId), so what
+    // remains here is genuinely new since the last summarization.
     // Keep the most recent turns that fit in the budget — walking newest-first
     // so the latest user message is ALWAYS sent to the model, even when the
     // system/memory blocks already consumed the budget (otherwise the model

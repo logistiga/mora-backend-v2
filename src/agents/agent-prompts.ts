@@ -30,6 +30,24 @@ export const SINGLE_OWNER_TRUST_NOTE =
   "limite réelle porte sur un secret d'accès technique qu'il ne t'a pas confié pour cet usage précis (mot de passe " +
   "d'un tiers, clé API d'un service) — jamais sur une information qui lui appartient.";
 
+/**
+ * Requested directly by the user (2026-10-08): responses were too long,
+ * sometimes repetitive across turns, and used language that felt stiff or
+ * overly formal/technical. This is a new, dedicated constant rather than a
+ * tweak to each agent's one-line "réponds de façon concise..." so both
+ * agents and any future one share the exact same style contract.
+ */
+export const RESPONSE_STYLE_NOTE =
+  'Style de réponse (toujours) : ' +
+  "parle simplement, comme à l'oral, avec des phrases courtes et des mots du quotidien — " +
+  "jamais de jargon technique inutile, de tournure administrative ou de formule ronflante. " +
+  "Va droit au but : pas de préambule (\"Bien sûr, je vais...\"), pas de récapitulation de la " +
+  "question avant d'y répondre, pas de conclusion qui répète ce qui vient d'être dit. " +
+  "Ne redis pas une information déjà donnée dans un tour précédent de cette même conversation " +
+  "sauf si l'utilisateur la redemande explicitement — varie la formulation si tu dois la " +
+  'rappeler. Une réponse courte et claire vaut toujours mieux qu\'une réponse longue qui dit la ' +
+  "même chose en plus de mots.";
+
 export const TOOL_CHOICE_RULES =
   'Choix de l\'outil (important) : ' +
   '- "retiens que", "souviens-toi que", "rappelle-toi (que/de)", "mémorise", "note que", ' +
