@@ -41,8 +41,13 @@ export class MemoryEmbeddingProcessor extends WorkerHost {
       return { embedded: false, reason: 'not_configured' };
     }
     if (!outcome.embedding || !outcome.dimensions || !outcome.model) {
-      this.logger.warn(`Embedding provider failed for memory ${memoryId}: ${outcome.error ?? 'unknown error'}`);
-      return { embedded: false, reason: outcome.error ?? 'provider_error' };
+      // A configured provider that still failed (timeout, 5xx, bad response) is a transient
+      // condition worth BullMQ's retry/backoff, unlike "not_configured" above which is a
+      // permanent, expected state for this user/env and must not retry. embed() itself never
+      // throws (see EmbeddingService), so this processor throws on its behalf.
+      const reason = outcome.error ?? 'provider_error';
+      this.logger.warn(`Embedding provider failed for memory ${memoryId}: ${reason}`);
+      throw new Error(`embedding_provider_failed: ${reason}`);
     }
 
     await this.embeddingRepository.setEmbedding({

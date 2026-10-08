@@ -61,22 +61,33 @@ container start. The Prisma schema declares `extensions = [vector]` (via the
 - Two separate secrets (`JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`) so leaking one doesn't
   compromise the other token type.
 
-### BullMQ: healthcheck job only — known gap
-`QueueModule` wires a BullMQ connection to Redis and registers one queue (`healthcheck`) with a
-trivial processor. This exists to prove the Redis/BullMQ plumbing works. Despite later phases
-(memory indexing, document fact extraction, reminders, notification delivery) being fully
-implemented, **none of that work actually runs through BullMQ today** — it executes synchronously
-inside the HTTP request/response cycle or inline in whichever service triggers it. This is the
-single largest production-readiness gap in the backend:
-- No retry-with-backoff on a failed embedding call or document parse — it just fails the request.
-- A slow LLM/embedding provider directly extends HTTP latency instead of being decoupled.
-- No visibility into queue depth/backlog for these workloads, because they never enter a queue.
+### BullMQ: `QueueModule` provides the connection, each domain owns its queues
+`QueueModule` (`src/queue/`) does `BullModule.forRootAsync` once, wiring the single Redis
+connection every other queue in the app inherits; it also registers its own `healthcheck` queue
+(used only by `GET /health`). Business modules **do** run real async jobs through it — each with
+its own `*-queue.constants.ts` (queue/job names + `attempts`/`backoff`/`removeOnComplete`
+defaults), a thin `*-queue.service.ts` wrapping `queue.add()`, and a `queue/processors/*` folder:
+- `src/memory/queue/` — `memory-embedding`, `memory-extraction`, `conversation-summary` queues.
+  `MemoryService.create/update` enqueues `enqueueEmbedding(...)` right after the Prisma write and
+  never awaits the job; `MoraOrchestratorService` enqueues extraction/summary the same way after a
+  turn. `EmbeddingService.embed()` itself never throws (returns `{ enabled, embedding, error? }`),
+  so a provider failure surfaces as a logged outcome, not a BullMQ retry today.
+- `src/documents/queue/` — `document-processing` queue, `jobId = documentId` for idempotency on
+  re-upload. `DocumentService` enqueues right after the upload is persisted; the processor runs
+  the real parse/chunk/classify pipeline (`DocumentIntakePipelineService`).
+- `src/reminders/queue/` — one delayed job per reminder (`delay: remindAt - now()`, `jobId =
+  reminder.id`), not a cron sweep; cancelling a reminder removes its BullMQ job directly.
+  `NotificationService` itself is a plain Prisma CRUD (no queue, no email/WhatsApp/push yet) but
+  is only ever called from inside the reminder-delivery processor, i.e. already off the HTTP path.
 
-Recommended follow-up (not yet done, deliberately — moving this safely needs its own
-test-and-verify pass against the e2e suite, which this delivery could not run locally): add real
-queues/processors for memory indexing and document extraction first (the two most latency-
-sensitive paths), keeping the synchronous path as a fallback behind a feature flag until the e2e
-suite is green against the new async flow.
+What is **not** queued: the main LLM call that produces a chat/voice response (`/messages`) stays
+synchronous by design — the HTTP response (or voice stream) *is* that answer, so queuing it would
+mean inventing a polling/callback contract on top of an endpoint that already returns the result
+directly. That is a deliberate design choice, not a gap.
+
+Any change to the retry/backoff/delay defaults above must stay compatible with the `waitFor(...,
+timeoutMs)` polling windows (5000–12000ms) hard-coded in `test/memory.e2e-spec.ts` and
+`test/documents-connections.e2e-spec.ts`, which assert the async pipeline actually completes.
 
 ### Structured logging
 `nestjs-pino` replaces Nest's default logger app-wide (`app.useLogger`), producing JSON logs in
