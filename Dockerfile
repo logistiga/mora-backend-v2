@@ -30,6 +30,11 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 COPY prisma ./prisma
+# Needed to run `prisma migrate deploy` directly inside this image (e.g. a
+# manual production rollout without a separate CI step that already has the
+# full devDependencies checkout) — prisma 7's config-based CLI reads the
+# datasource URL from this file, not from DATABASE_URL directly.
+COPY prisma.config.ts ./
 
 # Upload storage is a mount point at runtime; create it owned by the runtime
 # user so a fresh named volume inherits that ownership and stays writable.
